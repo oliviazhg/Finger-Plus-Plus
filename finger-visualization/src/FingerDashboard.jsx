@@ -34,10 +34,6 @@ export default function FingerDashboard() {
       setData((prev) => ({
         ...prev,
         ...incoming,
-        logs: [
-          `[${new Date().toLocaleTimeString()}] Data Received`,
-          ...prev.logs,
-        ].slice(0, 15),
       }));
     };
     return () => socket.current.close();

@@ -12,6 +12,7 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 TOPIC_MOTOR = "motor/command"
 TOPIC_SYS_MODE = "system/control_mode"
 TOPIC_MYO_STATE = "sensor/myo/state"
+TOPIC_LOGS = "system/logs"
 
 current_mode = "myo" 
 
@@ -30,7 +31,6 @@ def on_message(client, userdata, msg):
     global current_mode
     if msg.topic == TOPIC_SYS_MODE:
         current_mode = msg.payload.decode()
-        print(f"[Myo] current mode changed to: {current_mode}")
 
 def main():
     global current_mode
@@ -63,7 +63,7 @@ def main():
         client.loop_start() # Runs a background thread to process incoming MQTT messages
         
         print(f"Connected to MQTT")
-
+        client.publish(TOPIC_LOGS, "[Myo] Ready")
         last_state = -1
 
         while True:
@@ -87,15 +87,10 @@ def main():
 
                 # Only execute if Myo is the active mode
                 if current_mode == "myo":
-                    # motor 1
-                    payload1 = {"id": 1, "position": m1_target}
-                    client.publish(TOPIC_MOTOR, json.dumps(payload1))
-
-                    # motor 2
-                    payload2 = {"id": 2, "position": m2_target}
-                    client.publish(TOPIC_MOTOR, json.dumps(payload2))
-
+                    client.publish(TOPIC_MOTOR, json.dumps({"id": 1, "position": m1_target}))
+                    client.publish(TOPIC_MOTOR, json.dumps({"id": 2, "position": m2_target}))
                     print(f"State: {state_name} -> Sending M1:{m1_target}, M2:{m2_target}")
+                    client.publish(TOPIC_LOGS, f"[Myo] Executing: {state_name}")
                 else:
                     print(f"Myo triggered '{state_name}', but mode is '{current_mode}'. Ignored.")
 

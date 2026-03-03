@@ -6,6 +6,7 @@ import math
 import time
 import os
 import paho.mqtt.client as mqtt
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,18 +15,28 @@ PORT = 8765
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_TOPIC  = "motor/command"
 TOPIC_MYO_STATE = "sensor/myo/state"
+TOPIC_LOGS = "system/logs"
 
 current_myo_state = "UNKNOWN"
+system_logs = ["Starting..."]
+LOGS_LENGTH = 30 # Keep only the most recent 30 logs
 
 def on_mqtt_message(client, userdata, msg):
-    global current_myo_state
+    global current_myo_state, system_logs
+    
     if msg.topic == TOPIC_MYO_STATE:
         current_myo_state = msg.payload.decode()
+    elif msg.topic == TOPIC_LOGS:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_log = f"[{timestamp}] {msg.payload.decode()}"
+
+        system_logs.insert(0, formatted_log)
+        system_logs = system_logs[:LOGS_LENGTH]
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_message = on_mqtt_message
 mqtt_client.connect(MQTT_BROKER, 1883, 60)
-mqtt_client.subscribe(TOPIC_MYO_STATE)
+mqtt_client.subscribe([(TOPIC_MYO_STATE, 0), (TOPIC_LOGS, 0)]) 
 mqtt_client.loop_start()
 
 async def handle_connection(websocket):
@@ -33,7 +44,7 @@ async def handle_connection(websocket):
     
     # send dummy sensor data to React
     async def send_sensor_data():
-        global current_myo_state
+        global current_myo_state, system_logs
         try:
             while True:
                 t = time.time()
@@ -54,7 +65,8 @@ async def handle_connection(websocket):
                     },
                     "myo": {
                         "state": current_myo_state
-                    }
+                    },
+                    "logs": system_logs
                 }
                 await websocket.send(json.dumps(payload))
                 await asyncio.sleep(0.02)
@@ -91,6 +103,7 @@ async def handle_connection(websocket):
                             "position": target_pos
                         }
                         print(f"-> MQTT: Motor {motor_id} GO {direction.upper()} ({target_pos})")
+                        mqtt_client.publish(TOPIC_LOGS, f"[UI] Motor {motor_id} {direction.upper()}")
                         
                     elif action == "stop":
                         # Stop = Tell motor driver to hold current position
@@ -99,6 +112,7 @@ async def handle_connection(websocket):
                             "mode": "stop"
                         }
                         print(f"-> MQTT: Motor {motor_id} STOP")
+                        mqtt_client.publish(TOPIC_LOGS, f"[UI] Motor {motor_id} STOP")
 
                     if mqtt_payload:
                         mqtt_client.publish(MQTT_TOPIC, json.dumps(mqtt_payload))
@@ -107,6 +121,7 @@ async def handle_connection(websocket):
                     new_mode = command.get("mode")
                     print(f"Control mode changed to: {new_mode}")
                     mqtt_client.publish("system/control_mode", new_mode)
+                    mqtt_client.publish(TOPIC_LOGS, f"[System] Mode changed to {new_mode.upper()}")
                 
         except websockets.exceptions.ConnectionClosed:
             pass

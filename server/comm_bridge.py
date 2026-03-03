@@ -7,11 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
-MQTT_PORT   = int(os.getenv("MQTT_PORT", 0))
+MQTT_PORT   = int(os.getenv("MQTT_PORT", 1883))
 TOPIC_MODE = "fsr/mode"
 TOPIC_FINGER = 'fsr/finger'
 TOPIC_MOTOR  = "motor/command"
 TOPIC_SYS_MODE = "system/control_mode"
+TOPIC_LOGS = "system/logs"
 
 system_active = False
 last_finger_state = None
@@ -19,12 +20,8 @@ last_finger_state = None
 current_mode = "myo" 
 
 def send_motor_command(client, m1_position, m2_position):
-    payload1 = {"id": 1, "position": m1_position}
-    client.publish(TOPIC_MOTOR, json.dumps(payload1))
-    
-    payload2 = {"id": 2, "position": m2_position}
-    client.publish(TOPIC_MOTOR, json.dumps(payload2))
-    
+    client.publish(TOPIC_MOTOR, json.dumps({"id": 1, "position": m1_position}))
+    client.publish(TOPIC_MOTOR, json.dumps({"id": 2, "position": m2_position}))
     print(f"[FSR Executing] motor 1: {m1_position}, motor 2: {m2_position}")
 
 def on_message(client, userdata, msg):
@@ -33,7 +30,6 @@ def on_message(client, userdata, msg):
 
     if msg.topic == TOPIC_SYS_MODE:
         current_mode = payload
-        print(f"[FSR] current mode changed to: {current_mode}")
         return
 
     # activate/deactivate
@@ -41,10 +37,12 @@ def on_message(client, userdata, msg):
         if payload == "1":
             system_active = True
             print("FSR SENSOR ACTIVATED")
+            client.publish(TOPIC_LOGS, "[FSR] Sensor Activated")
         else:
             system_active = False
             last_finger_state = None
             print("FSR SENSOR DEACTIVATED")
+            client.publish(TOPIC_LOGS, "[FSR] Sensor Deactivated")
             
     # move finger
     elif msg.topic == TOPIC_FINGER:
@@ -57,6 +55,8 @@ def on_message(client, userdata, msg):
                         send_motor_command(client, -1000, 7000)
                     elif payload == "open":
                         send_motor_command(client, -1000, 3000)
+                        
+                    client.publish(TOPIC_LOGS, f"[FSR] Executing: {payload.upper()}")
                 else:
                     print(f"FSR triggered '{payload}', but current mode is '{current_mode}'. Ignored.")
 
@@ -72,6 +72,7 @@ client.subscribe([(TOPIC_MODE, 0), (TOPIC_FINGER, 0), (TOPIC_SYS_MODE, 0)])
 
 print("Connected to MQTT")
 print("Started... listening for sensors")
+client.publish(TOPIC_LOGS, "[FSR] Ready")
 
 try:
     client.loop_forever()
