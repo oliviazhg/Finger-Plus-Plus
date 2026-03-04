@@ -74,12 +74,12 @@ def main():
             if current_state != last_state:
                 if current_state == 1:
                     m1_target = -1000
-                    m2_target = 7000
+                    m2_target = 8000
                     state_name = "CLOSED (FIST)"
                     ui_state = "CLOSED"
                 else:
                     m1_target = -1000
-                    m2_target = 3000
+                    m2_target = 4000
                     state_name = "OPEN (RELAXED)"
                     ui_state = "OPEN"
 

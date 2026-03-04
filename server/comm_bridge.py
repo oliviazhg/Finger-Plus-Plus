@@ -52,9 +52,9 @@ def on_message(client, userdata, msg):
                 # Only execute if FSR is the active mode
                 if current_mode == "fsr":
                     if payload == "close":
-                        send_motor_command(client, -1000, 7000)
+                        send_motor_command(client, -1000, 8000)
                     elif payload == "open":
-                        send_motor_command(client, -1000, 3000)
+                        send_motor_command(client, -1000, 4000)
                         
                     client.publish(TOPIC_LOGS, f"[FSR] Executing: {payload.upper()}")
                 else:
