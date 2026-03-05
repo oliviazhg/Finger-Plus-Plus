@@ -10,8 +10,12 @@ import ControlOverlay from "./components/ControlOverlay";
 export default function FingerDashboard() {
   const [data, setData] = useState({
     angles: { base: 0, j1: 0, j2: 0, j3: 0 },
-    sensors: { flex: 0, force: 0 },
-    myo: { state: "OPEN" },
+    sensors: {
+      fsr: [0, 0, 0],
+      imu: [0, 0, 0],
+      motors: [150, 4000],
+    },
+    myo: { state: "UNKNOWN" },
     logs: ["Started..."],
   });
 
@@ -111,8 +115,20 @@ export default function FingerDashboard() {
             j3: curlFactor * 1.0,
           },
           sensors: {
-            flex: Math.floor(curlFactor * 90),
-            force: (curlFactor * 5).toFixed(2),
+            fsr: [
+              Math.floor(curlFactor * 10),
+              Math.floor(curlFactor * 30),
+              Math.floor(curlFactor * 80),
+            ],
+            imu: [
+              Math.floor(curlFactor * 1.2 * 57.3),
+              Math.floor(curlFactor * 1.1 * 57.3),
+              Math.floor(curlFactor * 0.4 * 57.3),
+            ],
+            motors: [
+              Math.floor(baseSweepFactor * -1500 + 500),
+              Math.floor(curlFactor * 4000 + 3000),
+            ],
           },
           myo: { state: curlFactor > 0.6 ? "CLOSED" : "OPEN" },
         }));

@@ -16,10 +16,10 @@ TOPIC_LOGS = "system/logs"
 TOPIC_FSR = 'sensor/fsr/raw'
 
 CATEGORY_MAP = {
-    0: {"name": "rest",         "ui": "RELAXED",      "m1": 150,   "m2": 4000, "use_fsr": False},
+    0: {"name": "rest",         "ui": "RELAXED",      "m1": 150,   "m2": 6500, "use_fsr": False},
     1: {"name": "cynlindrical", "ui": "CYNLINDRICAL", "m1": -1100, "m2": 7050, "use_fsr": True},
     2: {"name": "ball",         "ui": "BALL",         "m1": -1100, "m2": 6900, "use_fsr": True},
-    3: {"name": "lateral",      "ui": "LATERAL",      "m1": -650,  "m2": 7550, "use_fsr": False},
+    3: {"name": "lateral",      "ui": "LATERAL",      "m1": -600,  "m2": 7550, "use_fsr": False},
     4: {"name": "flat",         "ui": "FLAT",         "m1": 120,   "m2": 6650, "use_fsr": False}
 }
 
@@ -110,7 +110,7 @@ def main():
             # if current_mode == "myo" and CATEGORY_MAP.get(current_state, {}).get("use_fsr"):
             #     if live_fsr_value < FSR_TARGET_FORCE:
             #         active_target_m2 += 50 
-            #         active_target_m2 = min(active_target_m2, 8300) 
+            #         active_target_m2 = min(active_target_m2, 8400) 
             #         client.publish(TOPIC_MOTOR, json.dumps({"id": 2, "position": active_target_m2}))
 
             #     elif live_fsr_value >= FSR_TARGET_FORCE:

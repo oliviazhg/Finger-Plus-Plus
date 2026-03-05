@@ -1,21 +1,96 @@
-import { Activity, Zap, Terminal } from "lucide-react";
-
 export default function DataSidebar({ data }) {
   return (
     <div className="data-sidebar">
       <section className="card">
-        <h3 style={{ color: "#60a5fa", fontSize: "12px" }}>FINGER SENSORS</h3>
-        <div className="sensor-grid">
-          <div className="sensor-box">
-            <div style={{ fontSize: "10px", color: "#64748b" }}>FLEX</div>
-            <div style={{ fontSize: "24px", fontWeight: "bold" }}>
-              {data.sensors.flex}°
+        <h3
+          style={{ color: "#60a5fa", fontSize: "12px", marginBottom: "15px" }}
+        >
+          HARDWARE DATA
+        </h3>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+          <div>
+            <div
+              style={{
+                fontSize: "10px",
+                color: "#64748b",
+                marginBottom: "4px",
+                fontWeight: "bold",
+              }}
+            >
+              MOTORS ( Base / Tendon )
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.motors[0]}
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.motors[1]}
+                </div>
+              </div>
             </div>
           </div>
-          <div className="sensor-box">
-            <div style={{ fontSize: "10px", color: "#64748b" }}>FORCE</div>
-            <div style={{ fontSize: "24px", fontWeight: "bold" }}>
-              {data.sensors.force}N
+
+          <div>
+            <div
+              style={{
+                fontSize: "10px",
+                color: "#64748b",
+                marginBottom: "4px",
+                fontWeight: "bold",
+              }}
+            >
+              FSR FORCE ( Base / Mid / Tip )
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.fsr[0]}
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.fsr[1]}
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.fsr[2]}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontSize: "10px",
+                color: "#64748b",
+                marginBottom: "4px",
+                fontWeight: "bold",
+              }}
+            >
+              IMU ANGLES ( Base / Mid / Tip )
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.imu[0]}°
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.imu[1]}°
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.imu[2]}°
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -53,9 +128,7 @@ export default function DataSidebar({ data }) {
         className="card"
         style={{ flex: 1, display: "flex", flexDirection: "column" }}
       >
-        <h3 style={{ color: "#fbbf24", fontSize: "12px" }}>
-          <Terminal size={14} /> DATA LOG
-        </h3>
+        <h3 style={{ color: "#60a5fa", fontSize: "12px" }}>DATA LOG</h3>
         <div className="log-stream">
           {data.logs.map((log, i) => (
             <div
