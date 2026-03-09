@@ -256,6 +256,12 @@ def save_results(gs, eval_out, meta, y_tr, X_test, y_test):
     np.save(os.path.join(RESULTS_DIR, 'fold_scores.npy'),
             np.array(eval_out['fold_scores']))
 
+    cv_results_path = os.path.join(RESULTS_DIR, 'cv_results.json')
+    with open(cv_results_path, 'w') as f:
+        json.dump({k: (v.tolist() if hasattr(v, 'tolist') else list(v))
+                   for k, v in gs.cv_results_.items()}, f, indent=2)
+    print(f'  Saved {cv_results_path}')
+
     results = {
         'best_params':            gs.best_params_,
         'best_cv_score':          float(gs.best_score_),
