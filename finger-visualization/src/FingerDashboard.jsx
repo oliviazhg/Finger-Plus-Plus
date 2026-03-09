@@ -198,9 +198,9 @@ export default function FingerDashboard() {
                   fontSize: "14px",
                 }}
               >
-                <option value="ui">Arrow keys</option>
-                <option value="fsr">FSR sensor</option>
-                <option value="myo">Myo band</option>
+                <option value="ui">[Manual] Arrow keys</option>
+                <option value="fsr">[Toe] FSR sensor</option>
+                <option value="myo">[EMG] Myo band</option>
               </select>
             </div>
 
