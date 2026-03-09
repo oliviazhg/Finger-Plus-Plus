@@ -1,83 +1,144 @@
-import React from "react";
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from "lucide-react";
+import React, { useState } from "react";
 
-export default function ControlOverlay({ activeKeys }) {
-  const getKeyStyle = (isActive) => ({
-    padding: "10px",
-    borderRadius: "8px",
-    backgroundColor: isActive ? "#60a5fa" : "#1e293b",
-    border: "1px solid #334155",
-    color: isActive ? "#fff" : "#64748b",
-    transition: "all 0.1s",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "5px",
-  });
+export default function ControlOverlay({ activeKeys, onSetPosition }) {
+  const [m1Pos, setM1Pos] = useState("");
+  const [m2Pos, setM2Pos] = useState("");
+
+  const handleM1Submit = (e) => {
+    e.preventDefault();
+    if (m1Pos !== "") onSetPosition(1, m1Pos);
+  };
+
+  const handleM2Submit = (e) => {
+    e.preventDefault();
+    if (m2Pos !== "") onSetPosition(2, m2Pos);
+  };
 
   return (
     <div
       style={{
         position: "absolute",
-        bottom: "40px",
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 20,
+        bottom: "24px",
+        left: "24px",
+        zIndex: 10,
         display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "10px",
-        background: "rgba(15, 23, 42, 0.8)",
-        padding: "20px",
-        borderRadius: "15px",
-        border: "1px solid #334155",
+        gap: "24px",
+        alignItems: "flex-end",
+        pointerEvents: "none", // Let clicks pass through to the 3D canvas...
       }}
     >
-      <div
+      {/* Arrow Key Visualizer */}
+      {/* <div
         style={{
-          fontSize: "12px",
-          color: "#60a5fa",
-          fontWeight: "bold",
-          marginBottom: "5px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "6px",
         }}
       >
-        MANUAL MOTOR CONTROL
-      </div>
-
-      {/* Motor 1: Vertical keys */}
-      <div style={{ display: "flex", gap: "20px", alignItems: "center" }}>
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{ fontSize: "10px", color: "#94a3b8", marginBottom: "5px" }}
-          >
-            MOTOR 1
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-            <div style={getKeyStyle(activeKeys.up)}>
-              <ArrowUp size={20} />
-            </div>
-            <div style={getKeyStyle(activeKeys.down)}>
-              <ArrowDown size={20} />
-            </div>
-          </div>
+        <div className={`key-box ${activeKeys.up ? "active" : ""}`}>↑</div>
+        <div style={{ display: "flex", gap: "6px" }}>
+          <div className={`key-box ${activeKeys.left ? "active" : ""}`}>←</div>
+          <div className={`key-box ${activeKeys.down ? "active" : ""}`}>↓</div>
+          <div className={`key-box ${activeKeys.right ? "active" : ""}`}>→</div>
         </div>
+      </div> */}
 
-        {/* Motor 2: Horizontal keys */}
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{ fontSize: "10px", color: "#94a3b8", marginBottom: "5px" }}
+      <div
+        style={{
+          pointerEvents: "auto", // catch clicks for the input boxes
+          background: "rgba(30, 41, 59, 0.8)",
+          padding: "16px",
+          borderRadius: "12px",
+          border: "1px solid #334155",
+          backdropFilter: "blur(4px)",
+        }}
+      >
+        <h4
+          style={{
+            margin: "0 0 12px 0",
+            fontSize: "12px",
+            color: "#94a3b8",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+          }}
+        >
+          ABSOLUTE POSITIONING
+        </h4>
+
+        <form
+          onSubmit={handleM1Submit}
+          style={{ display: "flex", gap: "8px", marginBottom: "12px" }}
+        >
+          <label
+            style={{
+              fontSize: "12px",
+              width: "55px",
+              alignContent: "center",
+              fontWeight: "bold",
+            }}
           >
-            MOTOR 2
-          </div>
-          <div style={{ display: "flex", gap: "5px" }}>
-            <div style={getKeyStyle(activeKeys.left)}>
-              <ArrowLeft size={20} />
-            </div>
-            <div style={getKeyStyle(activeKeys.right)}>
-              <ArrowRight size={20} />
-            </div>
-          </div>
-        </div>
+            M1 (Base)
+          </label>
+          <input
+            type="number"
+            value={m1Pos}
+            onChange={(e) => setM1Pos(e.target.value)}
+            placeholder="4300 to 3000"
+            style={{
+              background: "#0f172a",
+              border: "1px solid #334155",
+              color: "#fff",
+              padding: "6px 10px",
+              borderRadius: "6px",
+              width: "110px",
+              fontSize: "12px",
+            }}
+          />
+          <button
+            type="submit"
+            className="btn-primary"
+            style={{ padding: "6px 12px", fontSize: "12px" }}
+          >
+            GO
+          </button>
+        </form>
+
+        <form onSubmit={handleM2Submit} style={{ display: "flex", gap: "8px" }}>
+          <label
+            style={{
+              fontSize: "12px",
+              width: "55px",
+              alignContent: "center",
+              fontWeight: "bold",
+            }}
+          >
+            M2 (Curl)
+          </label>
+          <input
+            type="number"
+            value={m2Pos}
+            onChange={(e) => setM2Pos(e.target.value)}
+            placeholder="3000 to 6900"
+            style={{
+              background: "#0f172a",
+              border: "1px solid #334155",
+              color: "#fff",
+              padding: "6px 10px",
+              borderRadius: "6px",
+              width: "110px",
+              fontSize: "12px",
+            }}
+          />
+          <button
+            type="submit"
+            className="btn-primary"
+            style={{ padding: "6px 12px", fontSize: "12px" }}
+          >
+            GO
+          </button>
+        </form>
       </div>
     </div>
   );

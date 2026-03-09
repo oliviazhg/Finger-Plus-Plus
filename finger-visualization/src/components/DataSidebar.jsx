@@ -1,38 +1,210 @@
-import { Activity, Zap, Terminal } from "lucide-react";
-
 export default function DataSidebar({ data }) {
+  const getPercentage = (val) => Math.min(100, Math.max(0, (val / 3000) * 100));
+
   return (
     <div className="data-sidebar">
       <section className="card">
-        <h3 style={{ color: "#60a5fa", fontSize: "12px" }}>
-          <Activity size={14} /> FINGER SENSORS
+        <h3
+          style={{ color: "#60a5fa", fontSize: "12px", marginBottom: "15px" }}
+        >
+          HARDWARE DATA
         </h3>
-        <div className="sensor-grid">
-          <div className="sensor-box">
-            <div style={{ fontSize: "10px", color: "#64748b" }}>FLEX</div>
-            <div style={{ fontSize: "24px", fontWeight: "bold" }}>
-              {data.sensors.flex}°
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+          <div>
+            <div
+              style={{
+                fontSize: "10px",
+                color: "#64748b",
+                marginBottom: "8px",
+                fontWeight: "bold",
+              }}
+            >
+              TOE CONTROLLERS ( M1 / M2 )
+            </div>
+
+            {/* Motor 1 Bar */}
+            <div style={{ marginBottom: "10px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: "10px",
+                  marginBottom: "4px",
+                  fontWeight: "bold",
+                }}
+              >
+                <span>M1 Force</span>
+                <span>
+                  {Math.round(getPercentage(data.sensors.toe_fsr?.[0] || 0))}%
+                </span>
+              </div>
+              <div
+                style={{
+                  height: "8px",
+                  background: "#1e293b",
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${getPercentage(data.sensors.toe_fsr?.[0] || 0)}%`,
+                    background: "#10b981",
+                    transition: "width 0.1s ease-out",
+                  }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: "10px",
+                  marginBottom: "4px",
+                  fontWeight: "bold",
+                }}
+              >
+                <span>M2 Force</span>
+                <span>
+                  {Math.round(getPercentage(data.sensors.toe_fsr?.[1] || 0))}%
+                </span>
+              </div>
+              <div
+                style={{
+                  height: "8px",
+                  background: "#1e293b",
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${getPercentage(data.sensors.toe_fsr?.[1] || 0)}%`,
+                    background: "#3b82f6",
+                    transition: "width 0.1s ease-out",
+                  }}
+                />
+              </div>
             </div>
           </div>
-          <div className="sensor-box">
-            <div style={{ fontSize: "10px", color: "#64748b" }}>FORCE</div>
-            <div style={{ fontSize: "24px", fontWeight: "bold" }}>
-              {data.sensors.force}N
+
+          <div>
+            <div
+              style={{
+                fontSize: "10px",
+                color: "#64748b",
+                marginBottom: "4px",
+                fontWeight: "bold",
+              }}
+            >
+              MOTORS ( Base / Tendon )
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.motors[0]}
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.motors[1]}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontSize: "10px",
+                color: "#64748b",
+                marginBottom: "4px",
+                fontWeight: "bold",
+              }}
+            >
+              FSR FORCE ( Base / Mid / Tip )
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.fsr[0]}
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.fsr[1]}
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.fsr[2]}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontSize: "10px",
+                color: "#64748b",
+                marginBottom: "4px",
+                fontWeight: "bold",
+              }}
+            >
+              IMU ANGLES ( Base / Mid / Tip )
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.imu[0]}°
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.imu[1]}°
+                </div>
+              </div>
+              <div className="sensor-box" style={{ flex: 1, padding: "8px" }}>
+                <div style={{ fontSize: "14px", fontWeight: "bold" }}>
+                  {data.sensors.imu[2]}°
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       <section className="card">
-        <h3 style={{ color: "#34d399", fontSize: "12px" }}>
-          <Zap size={14} /> MYO BAND EMG
-        </h3>
-        <div className="emg-container">
-          {data.myo.emg.map((val, i) => (
-            <div key={i} className="emg-bar-bg">
-              <div className="emg-bar-fill" style={{ height: `${val}%` }} />
-            </div>
-          ))}
+        <h3 style={{ color: "#60a5fa", fontSize: "12px" }}>MYO BAND STATUS</h3>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: "10px 0",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "24px",
+              fontWeight: "bold",
+              letterSpacing: "2px",
+              padding: "10px 20px",
+              borderRadius: "8px",
+              backgroundColor: "rgba(96, 165, 250, 0.2)",
+              border: `1px solid #60a5fa`,
+              minWidth: "120px",
+              textAlign: "center",
+            }}
+          >
+            {data.myo.state || "UNKNOWN"}
+          </div>
         </div>
       </section>
 
@@ -40,9 +212,7 @@ export default function DataSidebar({ data }) {
         className="card"
         style={{ flex: 1, display: "flex", flexDirection: "column" }}
       >
-        <h3 style={{ color: "#fbbf24", fontSize: "12px" }}>
-          <Terminal size={14} /> DATA LOG
-        </h3>
+        <h3 style={{ color: "#60a5fa", fontSize: "12px" }}>DATA LOG</h3>
         <div className="log-stream">
           {data.logs.map((log, i) => (
             <div
