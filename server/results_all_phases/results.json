@@ -1,0 +1,176 @@
+{
+  "best_params": {
+    "max_depth": null,
+    "max_features": "sqrt",
+    "min_samples_leaf": 1,
+    "n_estimators": 300
+  },
+  "best_cv_score": 0.9507213804713806,
+  "oof_balanced_acc": 0.9506155507829215,
+  "fold_scores": [
+    0.9428800366300366,
+    0.9501924001924003,
+    0.9564435564435565,
+    0.9490459540459542,
+    0.9550449550449551
+  ],
+  "fold_mean": 0.9507213804713806,
+  "fold_std": 0.004816848389363276,
+  "classification_report": {
+    "cylindrical": {
+      "precision": 0.9415767982410219,
+      "recall": 0.9418726434855467,
+      "f1-score": 0.941724697628148,
+      "support": 9548.0
+    },
+    "lateral": {
+      "precision": 0.9475446428571429,
+      "recall": 0.9401993355481728,
+      "f1-score": 0.9438576987215119,
+      "support": 9933.0
+    },
+    "palm": {
+      "precision": 0.9626038781163435,
+      "recall": 0.9646079111727967,
+      "f1-score": 0.9636048526863085,
+      "support": 10087.0
+    },
+    "rest": {
+      "precision": 0.9505894413121476,
+      "recall": 0.95578231292517,
+      "f1-score": 0.953178804543352,
+      "support": 9702.0
+    },
+    "accuracy": 0.9507257448433919,
+    "macro avg": {
+      "precision": 0.950578690131664,
+      "recall": 0.9506155507829215,
+      "f1-score": 0.9505915133948302,
+      "support": 39270.0
+    },
+    "weighted avg": {
+      "precision": 0.950714038331431,
+      "recall": 0.9507257448433919,
+      "f1-score": 0.9507142563045768,
+      "support": 39270.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      0.9418726434855467,
+      0.03634268956849602,
+      0.003770423125261835,
+      0.018014243820695434
+    ],
+    [
+      0.04278667069364744,
+      0.9401993355481728,
+      0.009060706735125339,
+      0.007953287023054464
+    ],
+    [
+      0.0029741251115296915,
+      0.009517200356895014,
+      0.9646079111727967,
+      0.022900763358778626
+    ],
+    [
+      0.010616367759224902,
+      0.007627293341579056,
+      0.025974025974025976,
+      0.95578231292517
+    ]
+  ],
+  "class_order": [
+    "cylindrical",
+    "lateral",
+    "palm",
+    "rest"
+  ],
+  "phases_used": [
+    "init",
+    "steady",
+    "release"
+  ],
+  "windows_per_phase": {
+    "init": 19,
+    "steady": 39,
+    "release": 19
+  },
+  "test_size_fraction": 0.15,
+  "test_windows": 7007,
+  "train_windows": 39270,
+  "trial_counts": {
+    "cylindrical forward": 75,
+    "cylindrical by side": 75,
+    "lateral palm down": 50,
+    "lateral forward": 51,
+    "lateral by side": 50,
+    "palm": 150,
+    "rest": 150
+  },
+  "class_window_counts": {
+    "cylindrical": 11550,
+    "lateral": 11627,
+    "palm": 11550,
+    "rest": 11550
+  },
+  "phase_window_counts": {
+    "cylindrical forward": {
+      "init": 1425,
+      "steady": 2925,
+      "release": 1425
+    },
+    "cylindrical by side": {
+      "init": 1425,
+      "steady": 2925,
+      "release": 1425
+    },
+    "lateral palm down": {
+      "init": 950,
+      "steady": 1950,
+      "release": 950
+    },
+    "lateral forward": {
+      "init": 969,
+      "steady": 1989,
+      "release": 969
+    },
+    "lateral by side": {
+      "init": 950,
+      "steady": 1950,
+      "release": 950
+    },
+    "palm": {
+      "init": 2850,
+      "steady": 5850,
+      "release": 2850
+    },
+    "rest": {
+      "init": 2850,
+      "steady": 5850,
+      "release": 2850
+    }
+  },
+  "cv_folds": 5,
+  "feature_dim": 48,
+  "param_grid": {
+    "n_estimators": [
+      "100",
+      "300"
+    ],
+    "max_features": [
+      "sqrt",
+      "0.3"
+    ],
+    "max_depth": [
+      "10",
+      "20",
+      "None"
+    ],
+    "min_samples_leaf": [
+      "1",
+      "5"
+    ]
+  }
+}

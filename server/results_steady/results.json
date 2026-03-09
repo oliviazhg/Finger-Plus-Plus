@@ -1,0 +1,128 @@
+{
+  "best_params": {
+    "max_depth": 20,
+    "max_features": "sqrt",
+    "min_samples_leaf": 5,
+    "n_estimators": 300
+  },
+  "best_cv_score": 0.990572347706494,
+  "oof_balanced_acc": 0.989710988831012,
+  "fold_scores": [
+    0.9916666666666667,
+    0.9896561771561772,
+    0.9813291044998362,
+    0.9946095571095571,
+    0.9956002331002332
+  ],
+  "fold_mean": 0.990572347706494,
+  "fold_std": 0.005080416099849363,
+  "classification_report": {
+    "cylindrical": {
+      "precision": 0.9938981459751232,
+      "recall": 0.9962361797224183,
+      "f1-score": 0.9950657894736842,
+      "support": 4251.0
+    },
+    "lateral": {
+      "precision": 0.994346652961583,
+      "recall": 0.9872432708253603,
+      "f1-score": 0.9907822301881961,
+      "support": 7839.0
+    },
+    "palm": {
+      "precision": 0.9626168224299065,
+      "recall": 0.983911513323278,
+      "f1-score": 0.9731476877175534,
+      "support": 1989.0
+    },
+    "rest": {
+      "precision": 0.9830508474576272,
+      "recall": 0.9914529914529915,
+      "f1-score": 0.9872340425531915,
+      "support": 234.0
+    },
+    "accuracy": 0.9895200167679732,
+    "macro avg": {
+      "precision": 0.9834781172060599,
+      "recall": 0.989710988831012,
+      "f1-score": 0.9865574374831564,
+      "support": 14313.0
+    },
+    "weighted avg": {
+      "precision": 0.9896194500960153,
+      "recall": 0.9895200167679732,
+      "f1-score": 0.9895458737040146,
+      "support": 14313.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      0.9962361797224183,
+      0.0028228652081863093,
+      0.0,
+      0.0009409550693954364
+    ],
+    [
+      0.003316749585406302,
+      0.9872432708253603,
+      0.009439979589233321,
+      0.0
+    ],
+    [
+      0.0,
+      0.01608848667672197,
+      0.983911513323278,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.008547008547008548,
+      0.9914529914529915
+    ]
+  ],
+  "class_order": [
+    "cylindrical",
+    "lateral",
+    "palm",
+    "rest"
+  ],
+  "windows_per_trial": 39,
+  "trial_counts": {
+    "cylindrical forward": 58,
+    "cylindrical by side": 51,
+    "lateral palm up": 50,
+    "lateral palm down": 50,
+    "lateral forward": 51,
+    "lateral by side": 50,
+    "palm": 51,
+    "rest": 6
+  },
+  "class_window_counts": {
+    "cylindrical": 4251,
+    "lateral": 7839,
+    "palm": 1989,
+    "rest": 234
+  },
+  "cv_folds": 5,
+  "feature_dim": 48,
+  "param_grid": {
+    "n_estimators": [
+      "100",
+      "300"
+    ],
+    "max_features": [
+      "sqrt",
+      "0.3"
+    ],
+    "max_depth": [
+      "10",
+      "20",
+      "None"
+    ],
+    "min_samples_leaf": [
+      "1",
+      "5"
+    ]
+  }
+}

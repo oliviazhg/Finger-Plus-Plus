@@ -1,197 +1,190 @@
 '''
 Hand Position Detection using XGBoost
 
+Classes:
+  0 = rest
+  1 = cylindrical
+  2 = ball
+  3 = lateral
+  4 = flat
+
+Modes:
+  USE_IMU = True  — 18 features: 8 EMG (rectified) + 10 IMU (quat 4 + acc 3 + gyro 3)
+  USE_IMU = False —  8 features: 8 EMG (rectified) only
+  EMG at 200Hz (FILTERED mode). IMU at 50Hz linearly interpolated to 200Hz when used.
+
 Training Mode:
 1. Run with TRAINING_MODE = True
-2. Press '0' while hand is RELAXED (neutral resting position, minimal tension)
-3. Press '1' while making a CLOSED FIST (fully clenched)
-4. Exit when enough data collected (saved to data/vals0.dat, vals1.dat)
+2. Press '0'-'4' while holding the corresponding grip
+3. Exit when enough data collected (saved to data_emg/ or data_imu/ depending on USE_IMU)
 
 Training Tips:
-- RELAXED: Let hand hang naturally, no muscle tension
-- CLOSED FIST: Tight fist, thumb over fingers
 - Collect 250-300 samples per class (hold each pose for 5-6 seconds)
 - Vary hand position slightly during collection for robustness
+- Data files are not compatible between USE_IMU = True and False — erase when switching
 
 Classification Mode:
 1. Set TRAINING_MODE = False
 2. Call get_hand_position() to get current hand state
-   Returns: 0 = relaxed, 1 = closed fist
 '''
 
 import pygame
 from pygame.locals import *
 import numpy as np
-from collections import deque
-import threading
-import time
+import os
 import struct
+import time
 
 from pyomyo import Myo, emg_mode
 from pyomyo.Classifier import Live_Classifier, MyoClassifier, EMGHandler
 from xgboost import XGBClassifier
 
 TRAINING_MODE = False
+USE_IMU = False  # False = EMG only (8 features), True = EMG + IMU (18 features)
 
-# Sliding window parameters
-WINDOW_DURATION_MS = 200  # 200ms windows
-OVERLAP_PERCENT = 0.40    # 40% overlap
-EMG_SAMPLE_RATE = 200     # 200Hz for FILTERED mode
+CLASSES = {
+    0: "rest",
+    1: "cylindrical",
+    2: "ball",
+    3: "lateral",
+    4: "flat",
+}
+NUM_CLASSES = len(CLASSES)
+FEATURE_DIM = 18 if USE_IMU else 8  # 8 EMG + 10 IMU, or 8 EMG only
+DATA_DIR = "data_imu" if USE_IMU else "data_emg"
 
-# Calculate window parameters
-SAMPLES_PER_WINDOW = int((WINDOW_DURATION_MS / 1000.0) * EMG_SAMPLE_RATE)  # 10 samples
-STRIDE_SAMPLES = int(SAMPLES_PER_WINDOW * (1 - OVERLAP_PERCENT))  # 6 samples (60% stride)
-
-
-class SlidingWindowClassifier:
-    '''Applies classification on sliding windows of EMG data'''
-
-    def __init__(self, window_size, stride):
-        self.window_size = window_size
-        self.stride = stride
-        self.emg_buffer = deque(maxlen=window_size)
-        self.current_position = 0  # 0 = open, 1 = fist
-        self.samples_since_classify = 0
-        self.classifier = None
-        self.lock = threading.Lock()
-
-    def set_classifier(self, classifier):
-        '''Set the trained classifier'''
-        self.classifier = classifier
-
-    def add_emg_sample(self, emg):
-        '''Add new EMG sample and classify if window is ready'''
-        with self.lock:
-            self.emg_buffer.append(emg)
-            self.samples_since_classify += 1
-
-            # Check if we have enough samples and reached stride
-            if len(self.emg_buffer) >= self.window_size and \
-               self.samples_since_classify >= self.stride:
-                self._classify_window()
-                self.samples_since_classify = 0
-
-    def _classify_window(self):
-        '''Classify the current window'''
-        if self.classifier is None or self.classifier.model is None:
-            return
-
-        # Convert buffer to numpy array and flatten
-        window_data = np.array(list(self.emg_buffer)).flatten()
-
-        # Classify the window
-        try:
-            prediction = self.classifier.classify(window_data)
-            self.current_position = int(prediction)
-        except Exception as e:
-            print(f"Classification error: {e}")
-
-    def get_position(self):
-        '''Get current hand position (0=open, 1=fist)'''
-        with self.lock:
-            return self.current_position
+# IMU interpolation state — hardware delivers at 50Hz, interpolated to 200Hz
+_imu_prev = np.zeros(10, dtype=np.float32)
+_imu_next = np.zeros(10, dtype=np.float32)
+_imu_prev_t: float = 0.0
+_imu_next_t: float = 0.0
 
 
-# Global sliding window classifier
-sliding_classifier = SlidingWindowClassifier(SAMPLES_PER_WINDOW, STRIDE_SAMPLES)
+def _imu_handler(quat, acc, gyro):
+    global _imu_prev, _imu_next, _imu_prev_t, _imu_next_t
+    _imu_prev = _imu_next
+    _imu_prev_t = _imu_next_t
+    _imu_next = np.array(list(quat) + list(acc) + list(gyro), dtype=np.float32)
+    _imu_next_t = time.monotonic()
 
 
-class WindowedClassifier(Live_Classifier):
-    '''XGBoost binary classifier for relaxed vs fist'''
+def _get_imu():
+    '''Linearly interpolate IMU to the current timestamp.'''
+    dt = _imu_next_t - _imu_prev_t
+    if dt <= 0:
+        return _imu_next
+    t = np.clip((time.monotonic() - _imu_prev_t) / dt, 0.0, 1.0)
+    return _imu_prev + t * (_imu_next - _imu_prev)
+
+
+def _build_features(emg_rect):
+    '''Concatenate rectified EMG with IMU if enabled.'''
+    if USE_IMU:
+        return np.concatenate([emg_rect, _get_imu()])
+    return np.array(emg_rect, dtype=np.float32)
+
+
+class GripClassifier(Live_Classifier):
+    '''XGBoost multi-class classifier using EMG (+ optional IMU) features'''
 
     def __init__(self):
         model = XGBClassifier(
             eval_metric='mlogloss',
-            num_class=2,
+            num_class=NUM_CLASSES,
             objective='multi:softmax'
         )
-        super().__init__(model, name="Fist_Detector", color=(50, 150, 255))
+        super().__init__(model, name="Grip_Detector", color=(50, 150, 255))
+
+    def store_data(self, cls, vals):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(f'{DATA_DIR}/vals%d.dat' % cls, 'ab') as f:
+            f.write(struct.pack('<%df' % FEATURE_DIM, *vals))
+        self.train(np.vstack([self.X, vals]), np.hstack([self.Y, [cls]]))
+
+    def read_data(self):
+        X, Y = [], []
+        for i in range(NUM_CLASSES):
+            try:
+                data = np.fromfile(f'{DATA_DIR}/vals%d.dat' %i, dtype=np.float32).reshape(-1, FEATURE_DIM)
+            except ValueError:
+                print(f"Warning: data/vals{i}.dat has incompatible format — press 'e' in training mode to erase.")
+                data = np.zeros((0, FEATURE_DIM), dtype=np.float32)
+            X.append(data)
+            Y.append(np.full(data.shape[0], i))
+        self.train(np.vstack(X), np.hstack(Y))
+
+    def delete_data(self):
+        for i in range(NUM_CLASSES):
+            open(f'{DATA_DIR}/vals%d.dat' %i, 'wb').close()
+        self.read_data()
 
     def classify(self, emg):
-        '''Override to handle both single samples and windows'''
         if self.X.shape[0] == 0 or self.model is None:
             return 0
-
-        # Reshape appropriately
-        if len(emg) == 8:
-            # Single EMG sample
-            x = np.array(emg).reshape(1, -1)
-        else:
-            # Already a flattened window
-            x = np.array(emg).reshape(1, -1)
-
+        features = _build_features(np.abs(emg)).reshape(1, -1)
         try:
-            pred = self.model.predict(x)
-            return int(pred[0])
+            return int(self.model.predict(features)[0])
         except:
             return 0
 
 
-class WindowedEMGHandler(EMGHandler):
-    '''EMG handler that updates the global position tracker'''
+class GripEMGHandler(EMGHandler):
+    '''EMG handler — rectifies and optionally appends IMU before storing training data'''
 
     def __call__(self, emg, moving):
-        # Store training data if in recording mode
+        emg_rect = np.abs(emg)
         if self.recording >= 0:
-            self.m.cls.store_data(self.recording, emg)
-
-        # Keep for GUI display
-        self.emg = emg
+            self.m.cls.store_data(self.recording, _build_features(emg_rect))
+        self.emg = tuple(emg_rect)  # 8-value tuple for GUI display
 
 
-# Global position tracker - updated by pose handler
-_current_hand_position = 0  # Default to relaxed
+# Global position tracker
+_current_hand_position = 0
 
 
 def _pose_handler(pose):
-    '''Internal handler that updates global hand position'''
     global _current_hand_position
     _current_hand_position = pose
-
-    # Write to file for external server polling
     try:
         with open('hand_position.txt', 'w') as f:
             f.write(str(pose))
     except:
-        pass  # Silently fail if file write fails
+        pass
 
 
 def get_hand_position():
-    '''
-    Returns the current hand position based on EMG classification.
-
-    Returns:
-        int: 0 = relaxed, 1 = closed fist
-    '''
+    '''Returns the current grip class (0=rest, 1=cylindrical, 2=ball, 3=lateral, 4=flat)'''
     return _current_hand_position
 
 
+def _setup_myo(clr):
+    m = MyoClassifier(clr, mode=emg_mode.FILTERED, hist_len=6)
+    if USE_IMU:
+        m.add_imu_handler(_imu_handler)
+    return m
+
+
 def run_training_mode():
-    '''Run in training mode - collect labeled data'''
     print("=== TRAINING MODE ===")
-    print("Press '0' while hand is RELAXED (neutral rest, no tension)")
-    print("Press '1' while making a CLOSED FIST (fully clenched)")
+    print(f"  IMU: {'enabled' if USE_IMU else 'disabled'} ({FEATURE_DIM} features)")
+    for k, v in CLASSES.items():
+        print(f"  Press '{k}' while holding: {v}")
     print()
     print("TIP: Hold each pose for 5-6 seconds to collect ~250-300 samples")
-    print("TIP: Relax completely between collecting samples")
-    print()
-    print("Press 'q' to quit and save data")
-    print("Press 'e' to erase existing data")
+    print("Press 'q' to quit and save data | 'e' to erase existing data")
 
     pygame.init()
     w, h = 800, 320
     scr = pygame.display.set_mode((w, h))
     font = pygame.font.Font(None, 30)
 
-    # Create classifier
-    clr = WindowedClassifier()
-    m = MyoClassifier(clr, mode=emg_mode.FILTERED, hist_len=6)
+    clr = GripClassifier()
+    m = _setup_myo(clr)
 
-    hnd = WindowedEMGHandler(m)
+    hnd = GripEMGHandler(m)
     m.add_emg_handler(hnd)
     m.connect()
 
-    # Set LED color
     m.set_leds(m.cls.color, m.cls.color)
     pygame.display.set_caption(m.cls.name + " - TRAINING MODE")
 
@@ -200,7 +193,6 @@ def run_training_mode():
             try:
                 m.run()
             except struct.error:
-                # Ignore packet unpack errors in FILTERED mode (known pyomyo issue)
                 pass
             m.run_gui(hnd, scr, font, w, h)
 
@@ -210,56 +202,38 @@ def run_training_mode():
         try:
             m.disconnect()
         except:
-            pass  # Ignore disconnect errors
+            pass
         print("\nTraining data saved!")
         pygame.quit()
 
 
 def run_classification_mode():
-    '''Run in classification mode - use trained model'''
     print("=== CLASSIFICATION MODE ===")
-    print("Model loaded. Call get_hand_position() to get current state.")
-    print("0 = Relaxed, 1 = Closed fist")
+    print(f"  IMU: {'enabled' if USE_IMU else 'disabled'} ({FEATURE_DIM} features)")
+    for k, v in CLASSES.items():
+        print(f"  {k} = {v}")
     print("Press Ctrl+C to quit")
 
-    # Create classifier and load training data
-    clr = WindowedClassifier()
-    m = MyoClassifier(clr, mode=emg_mode.FILTERED, hist_len=6)  # Reduced for lower latency
-
-    # Add pose handler to track position
+    clr = GripClassifier()
+    m = _setup_myo(clr)
     m.add_raw_pose_handler(_pose_handler)
 
-    hnd = WindowedEMGHandler(m)
+    hnd = GripEMGHandler(m)
     m.add_emg_handler(hnd)
     m.connect()
 
-    # Set LED color
-    m.set_leds([0, 255, 0], [0, 255, 0])  # Green = ready
-
+    m.set_leds([0, 255, 0], [0, 255, 0])
     print("\nStarting classification...")
-    print("Hand position updates using smoothed predictions (6-sample history @ 200Hz = ~30ms latency)")
 
     try:
-        last_position = -1
-        position_names = {0: "RELAXED", 1: "CLOSED FIST"}
-
         while True:
             try:
                 m.run()
             except struct.error:
-                # Ignore packet unpack errors in FILTERED mode
                 pass
-
-            # Print position when it changes
             current_pos = get_hand_position()
-            status = position_names.get(current_pos, "UNKNOWN")
-            print(f"Hand position: {current_pos} ({status})")
-            # if current_pos != last_position:
-            #     status = position_names.get(current_pos, "UNKNOWN")
-            #     print(f"Hand position: {current_pos} ({status})")
-            #     last_position = current_pos
-
-            time.sleep(0.01)  # Small delay to prevent CPU spinning
+            print(f"Hand position: {current_pos} ({CLASSES.get(current_pos, 'UNKNOWN')})")
+            time.sleep(0.01)
 
     except KeyboardInterrupt:
         pass
@@ -269,62 +243,36 @@ def run_classification_mode():
 
 
 def run_classification_mode_with_shared_value(shared_position):
-    '''
-    Run classification mode with multiprocessing shared value.
-    Used when running as a background process.
-
-    Args:
-        shared_position: multiprocessing.Value to update with hand position
-    '''
+    '''Run classification mode with multiprocessing shared value.'''
     print("=== CLASSIFICATION MODE (Background Process) ===")
-    print("Model loaded. Updating shared memory with hand position.")
-    print("0 = Relaxed, 1 = Closed fist")
+    print(f"  IMU: {'enabled' if USE_IMU else 'disabled'} ({FEATURE_DIM} features)")
+    for k, v in CLASSES.items():
+        print(f"  {k} = {v}")
 
-    # Create custom pose handler that updates shared value
     def shared_pose_handler(pose):
         global _current_hand_position
         _current_hand_position = pose
-        shared_position.value = pose  # Update shared memory
+        shared_position.value = pose
 
-    # Create classifier and load training data
-    clr = WindowedClassifier()
-    m = MyoClassifier(clr, mode=emg_mode.FILTERED, hist_len=6)  # Reduced for lower latency
-
-    # Add shared pose handler
+    clr = GripClassifier()
+    m = _setup_myo(clr)
     m.add_raw_pose_handler(shared_pose_handler)
 
-    hnd = WindowedEMGHandler(m)
+    hnd = GripEMGHandler(m)
     m.add_emg_handler(hnd)
     m.connect()
 
-    # Set LED color
-    m.set_leds([0, 255, 0], [0, 255, 0])  # Green = ready
-
+    m.set_leds([0, 255, 0], [0, 255, 0])
     print("\nStarting classification...")
-    print("Hand position updates using smoothed predictions (6-sample history @ 200Hz = ~30ms latency)")
 
     try:
-        last_position = -1
-        position_names = {0: "RELAXED", 1: "CLOSED FIST"}
-
         while True:
             try:
                 m.run()
             except struct.error:
-                # Ignore packet unpack errors in FILTERED mode
                 pass
-
-            # Print position when it changes (in background process)
             current_pos = get_hand_position()
-            status = position_names.get(current_pos, "UNKNOWN")
-            print(f"[Classifier] Hand position: {current_pos} ({status})")
-
-
-            # if current_pos != last_position:
-            #     status = position_names.get(current_pos, "UNKNOWN")
-            #     print(f"[Classifier] Hand position: {current_pos} ({status})")
-            #     last_position = current_pos
-
+            print(f"[Classifier] {current_pos} ({CLASSES.get(current_pos, 'UNKNOWN')})")
             time.sleep(0.01)
 
     except KeyboardInterrupt:
