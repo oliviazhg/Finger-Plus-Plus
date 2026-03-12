@@ -14,7 +14,7 @@ Startup calibration:
 Display updates every 200ms. Smoothing: majority vote over last SMOOTH_N predictions.
 Dwell-time filter: committed class only changes after candidate holds for DWELL_TIME seconds.
 
-Run: python run_inference.py
+Run: python run_inference_rf.py
 '''
 
 import threading

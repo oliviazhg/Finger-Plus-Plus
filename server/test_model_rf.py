@@ -5,9 +5,9 @@ Evaluates a trained model on its held-out test set (15% of trials
 set aside during training, never seen by the model).
 
 Usage:
-  python test_model.py                        # defaults to results_all_phases/
-  python test_model.py results_steady         # test the steady-only model
-  python test_model.py results_all_phases     # test the all-phases model
+  python test_model_rf.py                        # defaults to results_all_phases/
+  python test_model_rf.py results_steady         # test the steady-only RF model
+  python test_model_rf.py results_all_phases     # test the all-phases RF model
 '''
 
 import os
@@ -112,7 +112,7 @@ if __name__ == '__main__':
 
     if not os.path.isdir(results_dir):
         print(f'Error: directory not found: {results_dir}')
-        print('Usage: python test_model.py [results_steady | results_all_phases]')
+        print('Usage: python test_model_rf.py [results_steady | results_all_phases]')
         sys.exit(1)
 
     for required in ('model.joblib', 'X_test.npy', 'y_test.npy', 'results.json'):

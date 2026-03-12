@@ -1,23 +1,22 @@
 '''
-Random Forest Training Script — Steady Phase Only
+Random Forest Training Script — All Phases (init + steady + release)
 
-Loads processed steady-state features from data_processed/,
-merges sub-classes into 4 groups, and trains a Random Forest
-using trial-aware cross-validation (no window leakage between folds).
+Same as train_model_rf_steady.py but trains on all three phases combined.
+Windows from the same trial share a group ID across phases so
+GroupKFold never splits a trial, even across different phases.
 
 15% of trials are held out as a test set before any training occurs.
-The model is never shown test data during training or CV.
 
-Outputs saved to results_steady/:
+Outputs saved to results_all_phases/:
   model.joblib            — final model trained on 85% train trials
-  X_test.npy / y_test.npy — held-out test set for test_model.py
+  X_test.npy / y_test.npy — held-out test set for test_model_rf.py
   results.json            — metrics, params, fold scores, class counts
   confusion_matrix.png    — normalised CV confusion matrix
   feature_importance.png  — top-20 feature importances
   cv_predictions.npy      — (y_true, y_pred) from CV folds (train set only)
   fold_scores.npy         — balanced_accuracy per fold
 
-Run: python train_model.py
+Run: python train_model_rf_all_phases.py
 '''
 
 import os
@@ -42,12 +41,11 @@ from sklearn.metrics import (balanced_accuracy_score, classification_report,
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 PROCESSED_DIR = 'data_processed'
-RESULTS_DIR   = 'results_steady'
+RESULTS_DIR   = 'results_rf_all_phases'
 
 CLASS_GROUPS = {
     'cylindrical forward': 'cylindrical',
     'cylindrical by side': 'cylindrical',
-    'lateral palm up':     'lateral',
     'lateral palm down':   'lateral',
     'lateral forward':     'lateral',
     'lateral by side':     'lateral',
@@ -57,10 +55,13 @@ CLASS_GROUPS = {
 GROUPS = ['cylindrical', 'lateral', 'palm', 'rest']
 GROUP_TO_INT = {g: i for i, g in enumerate(GROUPS)}
 
-STEADY_SAMPLES    = 800
-WINDOW_SIZE       = 40
-STRIDE            = 20
-WINDOWS_PER_TRIAL = (STEADY_SAMPLES - WINDOW_SIZE) // STRIDE + 1  # 39
+WINDOW_SIZE = 40
+STRIDE      = 20
+PHASE_SAMPLES = {'init': 400, 'steady': 800, 'release': 400}
+WINDOWS_PER_PHASE = {
+    phase: (n - WINDOW_SIZE) // STRIDE + 1
+    for phase, n in PHASE_SAMPLES.items()
+}  # init: 19, steady: 39, release: 19
 
 FEATURE_NAMES = (
     [f'MAV_ch{i+1}'  for i in range(8)] +
@@ -107,29 +108,36 @@ def _fpath(cls, phase):
 def load_data():
     X_parts, y_parts, g_parts = [], [], []
     trial_counter = 0
-    meta = {'class_counts': {}, 'trial_counts': {}}
+    meta = {'class_counts': {}, 'trial_counts': {}, 'phase_counts': {}}
 
     for sub_cls, group in CLASS_GROUPS.items():
-        path = _fpath(sub_cls, 'steady')
-        if not os.path.exists(path):
+        steady_path = _fpath(sub_cls, 'steady')
+        if not os.path.exists(steady_path):
             continue
-        data     = np.load(path)
-        n_trials = data.shape[0] // WINDOWS_PER_TRIAL
-        data     = data[:n_trials * WINDOWS_PER_TRIAL]
 
-        trial_ids = np.repeat(
-            np.arange(trial_counter, trial_counter + n_trials),
-            WINDOWS_PER_TRIAL
-        )
+        wpt_steady = WINDOWS_PER_PHASE['steady']
+        n_trials   = np.load(steady_path).shape[0] // wpt_steady
+        base_ids   = np.arange(trial_counter, trial_counter + n_trials)
         trial_counter += n_trials
 
         label = GROUP_TO_INT[group]
-        X_parts.append(data)
-        y_parts.append(np.full(len(data), label, dtype=np.int32))
-        g_parts.append(trial_ids)
+        phase_window_counts = {}
+
+        for phase in ('init', 'steady', 'release'):
+            path = _fpath(sub_cls, phase)
+            if not os.path.exists(path):
+                continue
+            wpt  = WINDOWS_PER_PHASE[phase]
+            data = np.load(path)[:n_trials * wpt]
+            trial_ids = np.repeat(base_ids, wpt)
+            X_parts.append(data)
+            y_parts.append(np.full(len(data), label, dtype=np.int32))
+            g_parts.append(trial_ids)
+            phase_window_counts[phase] = len(data)
 
         meta['trial_counts'][sub_cls] = n_trials
-        meta['class_counts'][group]   = meta['class_counts'].get(group, 0) + len(data)
+        meta['class_counts'][group]   = meta['class_counts'].get(group, 0) + sum(phase_window_counts.values())
+        meta['phase_counts'][sub_cls] = phase_window_counts
 
     return np.vstack(X_parts), np.concatenate(y_parts), np.concatenate(g_parts), meta
 
@@ -164,8 +172,7 @@ def evaluate(gs, X_tr, y_tr, groups_tr):
     best = gs.best_estimator_
     gkf  = GroupKFold(n_splits=CV_FOLDS)
 
-    n_cv = CV_FOLDS
-    with tqdm_joblib(tqdm(desc='  CV predict ', total=n_cv, ncols=72)):
+    with tqdm_joblib(tqdm(desc='  CV predict ', total=CV_FOLDS, ncols=72)):
         y_pred = cross_val_predict(best, X_tr, y_tr, cv=gkf, groups=groups_tr,
                                    method='predict', n_jobs=-1)
 
@@ -179,7 +186,6 @@ def evaluate(gs, X_tr, y_tr, groups_tr):
         best.fit(X_tr[tr_idx], y_tr[tr_idx])
         fold_scores.append(balanced_accuracy_score(y_tr[te_idx], best.predict(X_tr[te_idx])))
 
-    # Final model — trained on all 85% train data
     final_model = RandomForestClassifier(**gs.best_params_, class_weight='balanced',
                                          random_state=42, n_jobs=-1)
     print('  Fitting final model on train set...')
@@ -210,7 +216,7 @@ def plot_feature_importance(model, path, top_n=20):
     ax.set_xticks(range(top_n))
     ax.set_xticklabels([FEATURE_NAMES[i] for i in idx], rotation=45, ha='right', fontsize=8)
     ax.set_ylabel('Mean decrease in impurity')
-    ax.set_title(f'Top {top_n} feature importances')
+    ax.set_title(f'Top {top_n} feature importances (all phases)')
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close()
@@ -224,7 +230,7 @@ def plot_fold_scores(fold_scores, path):
                label=f'Mean {np.mean(fold_scores):.3f}')
     ax.set_xlabel('Fold')
     ax.set_ylabel('Balanced accuracy')
-    ax.set_title('Per-fold balanced accuracy (trial-aware CV, steady only)')
+    ax.set_title('Per-fold balanced accuracy (trial-aware CV, all phases)')
     ax.yaxis.set_major_formatter(ticker.PercentFormatter(xmax=1.0))
     ax.legend()
     plt.tight_layout()
@@ -250,6 +256,12 @@ def save_results(gs, eval_out, meta, y_tr, X_test, y_test):
     np.save(os.path.join(RESULTS_DIR, 'fold_scores.npy'),
             np.array(eval_out['fold_scores']))
 
+    cv_results_path = os.path.join(RESULTS_DIR, 'cv_results.json')
+    with open(cv_results_path, 'w') as f:
+        json.dump({k: (v.tolist() if hasattr(v, 'tolist') else list(v))
+                   for k, v in gs.cv_results_.items()}, f, indent=2)
+    print(f'  Saved {cv_results_path}')
+
     results = {
         'best_params':            gs.best_params_,
         'best_cv_score':          float(gs.best_score_),
@@ -260,13 +272,14 @@ def save_results(gs, eval_out, meta, y_tr, X_test, y_test):
         'classification_report':  eval_out['report'],
         'confusion_matrix':       eval_out['cm'].tolist(),
         'class_order':            GROUPS,
-        'phases_used':            ['steady'],
+        'phases_used':            ['init', 'steady', 'release'],
+        'windows_per_phase':      WINDOWS_PER_PHASE,
         'test_size_fraction':     TEST_SIZE,
         'test_windows':           int(len(y_test)),
         'train_windows':          int(len(y_tr)),
-        'windows_per_trial':      WINDOWS_PER_TRIAL,
         'trial_counts':           meta['trial_counts'],
         'class_window_counts':    meta['class_counts'],
+        'phase_window_counts':    meta['phase_counts'],
         'cv_folds':               CV_FOLDS,
         'feature_dim':            48,
         'param_grid':             {k: [str(v) for v in vs] for k, vs in PARAM_GRID.items()},
@@ -277,7 +290,7 @@ def save_results(gs, eval_out, meta, y_tr, X_test, y_test):
     print(f'  Saved {json_path}')
 
     plot_confusion_matrix(eval_out['cm'], GROUPS,
-                          'CV confusion matrix (normalised, steady only)',
+                          'CV confusion matrix (normalised, all phases)',
                           os.path.join(RESULTS_DIR, 'confusion_matrix.png'))
     plot_feature_importance(eval_out['final_model'],
                             os.path.join(RESULTS_DIR, 'feature_importance.png'))
@@ -288,19 +301,21 @@ def save_results(gs, eval_out, meta, y_tr, X_test, y_test):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    print('── Loading data ──────────────────────────────────────')
+    print('── Loading data (init + steady + release) ────────────')
     X, y, groups, meta = load_data()
     print(f'  Total windows : {len(X)}')
     print(f'  Unique trials : {len(np.unique(groups))}')
     for sub_cls, n in meta['trial_counts'].items():
-        g = CLASS_GROUPS[sub_cls]
-        print(f'    {sub_cls:<24} ({g:<12}) {n:>3} trials')
+        g  = CLASS_GROUPS[sub_cls]
+        pc = meta['phase_counts'][sub_cls]
+        print(f'    {sub_cls:<24} ({g:<12}) {n:>3} trials  '
+              f'init:{pc.get("init",0)} steady:{pc.get("steady",0)} release:{pc.get("release",0)}')
     print()
 
     print('── Train / test split (15% trials held out) ──────────')
     X_tr, y_tr, groups_tr, X_te, y_te = split_data(X, y, groups)
     print(f'  Train : {len(X_tr):>6} windows  ({len(np.unique(groups_tr))} trials)')
-    print(f'  Test  : {len(X_te):>6} windows  ({len(np.unique(groups[np.isin(groups, np.setdiff1d(groups, groups_tr))])]} trials)')
+    print(f'  Test  : {len(X_te):>6} windows')
     print()
 
     print('── Grid search (trial-aware 5-fold CV on train set) ──')
@@ -318,4 +333,4 @@ if __name__ == '__main__':
 
     print('── Saving ────────────────────────────────────────────')
     save_results(gs, eval_out, meta, y_tr, X_te, y_te)
-    print(f'\nDone. Run python test_model.py {RESULTS_DIR} to evaluate on the held-out test set.')
+    print(f'\nDone. Run python test_model_rf.py {RESULTS_DIR} to evaluate on the held-out test set.')
