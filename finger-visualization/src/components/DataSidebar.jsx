@@ -4,13 +4,11 @@ export default function DataSidebar({ data }) {
   return (
     <div className="data-sidebar">
       <section className="card">
-        <h3
-          style={{ color: "#60a5fa", fontSize: "12px", marginBottom: "15px" }}
-        >
+        <h3 style={{ color: "#60a5fa", fontSize: "12px", marginBottom: "4px" }}>
           HARDWARE DATA
         </h3>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <div>
             <div
               style={{
@@ -24,7 +22,7 @@ export default function DataSidebar({ data }) {
             </div>
 
             {/* Motor 1 Bar */}
-            <div style={{ marginBottom: "10px" }}>
+            <div style={{ marginBottom: "8px" }}>
               <div
                 style={{
                   display: "flex",
@@ -105,7 +103,7 @@ export default function DataSidebar({ data }) {
               FINGER SENSORS ( Base / Mid / Tip )
             </div>
 
-            <div style={{ marginBottom: "10px" }}>
+            <div style={{ marginBottom: "8px" }}>
               <div
                 style={{
                   display: "flex",
@@ -139,7 +137,7 @@ export default function DataSidebar({ data }) {
               </div>
             </div>
 
-            <div style={{ marginBottom: "10px" }}>
+            <div style={{ marginBottom: "8px" }}>
               <div
                 style={{
                   display: "flex",
@@ -279,15 +277,14 @@ export default function DataSidebar({ data }) {
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
-            padding: "10px 0",
           }}
         >
           <div
             style={{
-              fontSize: "24px",
+              fontSize: "20px",
               fontWeight: "bold",
               letterSpacing: "2px",
-              padding: "10px 20px",
+              padding: "8px 16px",
               borderRadius: "8px",
               backgroundColor: "rgba(96, 165, 250, 0.2)",
               border: `1px solid #60a5fa`,

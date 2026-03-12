@@ -48,12 +48,12 @@
   width: 380px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .card {
   background-color: #1e293b;
-  padding: 20px;
+  padding: 16px;
   border-radius: 16px;
   border: 1px solid #334155;
   min-height: 0;
