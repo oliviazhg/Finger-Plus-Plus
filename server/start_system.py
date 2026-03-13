@@ -8,10 +8,10 @@ def main():
 
     try:
         # Start Motor Driver
-        print("Starting Motor Driver...")
-        p_motor = subprocess.Popen([sys.executable, "motor_driver_json.py"])
-        processes.append(p_motor)
-        time.sleep(2)
+        # print("Starting Motor Driver...")
+        # p_motor = subprocess.Popen([sys.executable, "motor_driver_json.py"])
+        # processes.append(p_motor)
+        # time.sleep(2)
 
         # Start FSR Controller (comm_bridge)
         print("Starting ESP32 Sensor Bridge...")
