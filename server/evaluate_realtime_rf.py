@@ -1,34 +1,21 @@
 '''
-Structured Real-time Evaluation — BPNN
+Structured Real-time Evaluation — Random Forest
 
-Runs a prompted evaluation session with the Myo armband.
+Identical protocol to evaluate_realtime_bpnn.py.
 Each trial has three recorded phases:
 
   transition_in  (2s) — user moves from rest into the gesture
-                        ground truth = target class
   hold           (Xs) — user holds gesture steady
-                        ground truth = target class
   transition_out (2s) — user relaxes back to rest
-                        ground truth = rest
 
-Between trials there is a REST_GAP_SEC rest period.
-Per-trial summary shows whether each transition was read correctly
-(majority of predictions during that phase matched ground truth).
+Loads model.joblib from the results directory (pass --results to switch
+between results_steady and results_all_phases).
 
-After all repetitions the script computes accuracy metrics and saves:
-  predictions.csv              — per-prediction log with phase label
-  results.json                 — hold + transition metrics
-  confusion_matrix_raw.png     — hold phase only
-  confusion_matrix_smoothed.png
-  confidence_histogram.png     — hold phase only
-  transition_accuracy.png      — per-class transition-in and transition-out accuracy
-  timeline.png                 — prediction timeline coloured correct/incorrect
-
-Output is written to a timestamped folder under inference_eval_bpnn/.
+Output is written to a timestamped folder under inference_eval_rf/.
 
 Usage:
-  python evaluate_realtime_bpnn.py
-  python evaluate_realtime_bpnn.py --reps 5 --hold 8 --rest 7
+  python evaluate_realtime_rf.py
+  python evaluate_realtime_rf.py --results results_steady --reps 5 --hold 8 --rest 7
 '''
 
 import os
@@ -39,49 +26,35 @@ import queue
 import struct
 import threading
 import argparse
+import warnings
 from collections import deque
 from datetime import datetime
 
 import numpy as np
 import matplotlib.pyplot as plt
 import joblib
-import torch
-import torch.nn as nn
 from sklearn.metrics import (balanced_accuracy_score, classification_report,
                              confusion_matrix, ConfusionMatrixDisplay)
+
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+
 from pyomyo import Myo, emg_mode
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-RESULTS_DIR     = 'results_bpnn'
-CLASSES         = ['cylindrical', 'lateral', 'palm', 'rest']
-REST_IDX        = CLASSES.index('rest')
-WINDOW_SIZE     = 40
-STRIDE          = 20
-WAMP_THRESH     = 10.0
-SMOOTH_N        = 5
-CALIB_SEC       = 2
-HOLD_SEC        = 5      # seconds to record during steady hold
-TRANSITION_SEC  = 2      # seconds to record during each transition
-REST_GAP_SEC    = 7      # rest gap between trials
-WARMUP_SEC      = 0.5    # discard predictions at start of each phase (buffer settling)
-N_REPS          = 5      # repetitions per class
-
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# ── Model (must match train_model_bpnn.py) ────────────────────────────────────
-
-class BPNN(nn.Module):
-    def __init__(self, dropout=0.0):
-        super().__init__()
-        layers = [nn.Linear(48, 128), nn.ReLU()]
-        if dropout > 0:
-            layers.append(nn.Dropout(dropout))
-        layers.append(nn.Linear(128, 4))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.net(x)
+RESULTS_DIR    = 'results_steady'   # overridable via --results
+CLASSES        = ['cylindrical', 'lateral', 'palm', 'rest']
+REST_IDX       = CLASSES.index('rest')
+WINDOW_SIZE    = 40
+STRIDE         = 20
+WAMP_THRESH    = 10.0
+SMOOTH_N       = 5
+CALIB_SEC      = 2
+HOLD_SEC       = 5
+TRANSITION_SEC = 2
+REST_GAP_SEC   = 7
+WARMUP_SEC     = 0.5
+N_REPS         = 5
 
 # ── Myo background thread ─────────────────────────────────────────────────────
 
@@ -140,12 +113,9 @@ def extract_features(window):
 
 # ── Inference ─────────────────────────────────────────────────────────────────
 
-def infer(model, scaler, features):
-    x   = scaler.transform(features.reshape(1, -1))
-    x_t = torch.tensor(x, dtype=torch.float32).to(DEVICE)
-    with torch.no_grad():
-        logits = model(x_t)
-        proba  = torch.softmax(logits, dim=1).cpu().numpy()[0]
+def infer(model, features):
+    x     = features.reshape(1, -1)
+    proba = model.predict_proba(x)[0]
     return int(proba.argmax()), proba
 
 
@@ -159,7 +129,6 @@ def countdown(label, seconds):
 
 
 def rest_gap(seconds, next_label):
-    '''Rest period between trials. Countdown appears in the last 3 seconds.'''
     quiet_sec = max(0, seconds - 3)
     if quiet_sec > 0:
         print(f'  Resting...', flush=True)
@@ -175,19 +144,7 @@ def drain_queue():
             break
 
 
-def record_phase(model, scaler, scale, true_idx, duration, phase):
-    '''
-    Record predictions for `duration` seconds.
-
-    true_idx : ground truth class index for this phase
-    phase    : 'transition_in', 'hold', or 'transition_out'
-
-    Smoothing buffer resets at the start of each phase.
-    Predictions within the first WARMUP_SEC are discarded (buffer settling).
-
-    Returns a list of dicts:
-      t, true, phase, raw_pred, smoothed_pred, proba (list), infer_ms
-    '''
+def record_phase(model, scale, true_idx, duration, phase):
     drain_queue()
 
     buf                = deque(maxlen=WINDOW_SIZE)
@@ -222,7 +179,7 @@ def record_phase(model, scaler, scale, true_idx, duration, phase):
         features = extract_features(np.array(buf))
 
         t0 = time.monotonic()
-        raw_pred, proba = infer(model, scaler, features)
+        raw_pred, proba = infer(model, features)
         infer_ms = (time.monotonic() - t0) * 1000
 
         recent_preds.append(raw_pred)
@@ -292,7 +249,6 @@ def compute_metrics(records):
     tr_out_recs = _phase_records(records, 'transition_out')
     infer_ms    = np.array([r['infer_ms'] for r in records])
 
-    # Per-class transition-in accuracy (raw)
     tr_in_per_class = {}
     for cls_idx, cls in enumerate(CLASSES):
         recs = [r for r in tr_in_recs if r['true'] == cls_idx]
@@ -300,22 +256,21 @@ def compute_metrics(records):
             correct = sum(r['raw_pred'] == cls_idx for r in recs)
             tr_in_per_class[cls] = float(correct / len(recs))
 
-    # Transition-out = rest detection accuracy
     tr_out_acc = None
     if tr_out_recs:
         correct    = sum(r['raw_pred'] == REST_IDX for r in tr_out_recs)
         tr_out_acc = float(correct / len(tr_out_recs))
 
     return {
-        'hold':            _acc_metrics(hold_recs),
-        'transition_in':   _acc_metrics(tr_in_recs),
-        'transition_out':  _acc_metrics(tr_out_recs),
-        'transition_in_acc_per_class':  tr_in_per_class,
-        'transition_out_rest_acc':      tr_out_acc,
-        'mean_infer_ms':   float(infer_ms.mean()),
-        'std_infer_ms':    float(infer_ms.std()),
-        'n_predictions':   len(records),
-        'class_order':     CLASSES,
+        'hold':           _acc_metrics(hold_recs),
+        'transition_in':  _acc_metrics(tr_in_recs),
+        'transition_out': _acc_metrics(tr_out_recs),
+        'transition_in_acc_per_class': tr_in_per_class,
+        'transition_out_rest_acc':     tr_out_acc,
+        'mean_infer_ms':  float(infer_ms.mean()),
+        'std_infer_ms':   float(infer_ms.std()),
+        'n_predictions':  len(records),
+        'class_order':    CLASSES,
     }
 
 
@@ -333,7 +288,7 @@ def plot_confusion_matrix(cm_data, title, path):
 
 
 def plot_confidence_histogram(records, path):
-    recs     = _phase_records(records, 'hold')
+    recs = _phase_records(records, 'hold')
     if not recs:
         return
     probas   = np.array([r['proba']    for r in recs])
@@ -361,14 +316,12 @@ def plot_transition_accuracy(metrics, path):
     tr_out = metrics['transition_out_rest_acc']
 
     gesture_classes = [c for c in CLASSES if c != 'rest']
-    in_accs  = [tr_in.get(c, 0) for c in gesture_classes]
-    out_acc  = tr_out if tr_out is not None else 0
+    in_accs = [tr_in.get(c, 0) for c in gesture_classes]
+    out_acc = tr_out if tr_out is not None else 0
 
-    x     = np.arange(len(gesture_classes))
-    width = 0.35
-
+    x = np.arange(len(gesture_classes))
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(x, in_accs, width, label='Transition in (→ gesture)',   color='steelblue')
+    ax.bar(x, in_accs, 0.5, label='Transition in (→ gesture)', color='steelblue')
     ax.axhline(out_acc, color='tomato', linestyle='--',
                label=f'Transition out (→ rest): {out_acc:.2f}')
     ax.set_xticks(x)
@@ -384,9 +337,7 @@ def plot_transition_accuracy(metrics, path):
 
 
 def plot_timeline(records, path):
-    '''One row per class — markers differ by phase, colour by correct/incorrect.'''
     MARKERS = {'transition_in': '^', 'hold': 'o', 'transition_out': 'v'}
-
     fig, axes = plt.subplots(len(CLASSES), 1, figsize=(14, 6), sharex=False)
 
     for cls_idx, (ax, cls) in enumerate(zip(axes, CLASSES)):
@@ -466,29 +417,23 @@ def save_all(records, metrics, out_dir):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description='Structured real-time BPNN evaluation')
-    parser.add_argument('--reps', type=int, default=N_REPS,         help='Repetitions per class')
-    parser.add_argument('--hold', type=int, default=HOLD_SEC,       help='Hold duration in seconds')
-    parser.add_argument('--rest', type=int, default=REST_GAP_SEC,   help='Rest gap between trials in seconds')
+    parser = argparse.ArgumentParser(description='Structured real-time RF evaluation')
+    parser.add_argument('--results', default=RESULTS_DIR,
+                        help='Results directory (default: results_steady)')
+    parser.add_argument('--reps', type=int, default=N_REPS,       help='Repetitions per class')
+    parser.add_argument('--hold', type=int, default=HOLD_SEC,     help='Hold duration in seconds')
+    parser.add_argument('--rest', type=int, default=REST_GAP_SEC, help='Rest gap between trials in seconds')
     args = parser.parse_args()
 
-    trial_sec   = TRANSITION_SEC + args.hold + TRANSITION_SEC
-    total_sec   = args.reps * len(CLASSES) * (args.rest + trial_sec)
+    trial_sec = TRANSITION_SEC + args.hold + TRANSITION_SEC
+    total_sec = args.reps * len(CLASSES) * (args.rest + trial_sec)
 
-    print(f'Device : {DEVICE}')
-    print('Loading model and scaler...')
-    with open(os.path.join(RESULTS_DIR, 'results.json')) as f:
+    print('Loading model...')
+    model = joblib.load(os.path.join(args.results, 'model.joblib'))
+    with open(os.path.join(args.results, 'results.json')) as f:
         meta = json.load(f)
-    dropout = meta.get('best_config', {}).get('dropout', 0.0)
-
-    model = BPNN(dropout=dropout).to(DEVICE)
-    model.load_state_dict(
-        torch.load(os.path.join(RESULTS_DIR, 'model.pt'), map_location=DEVICE)
-    )
-    model.eval()
-    scaler = joblib.load(os.path.join(RESULTS_DIR, 'scaler.joblib'))
-    print(f'  Architecture : {meta.get("architecture", "48→128→4")}')
-    print(f'  Config       : {meta.get("best_config")}')
+    print(f'  Results dir  : {args.results}')
+    print(f'  Best params  : {meta.get("best_params")}')
 
     myo_thread = threading.Thread(target=_myo_worker, daemon=True)
     myo_thread.start()
@@ -515,24 +460,18 @@ def main():
 
                 rest_gap(args.rest, cls)
 
-                # ── Transition in ──────────────────────────────────────
                 print(f'  TRANSITION INTO {cls.upper()}', flush=True)
-                tr_in = record_phase(model, scaler, scale,
-                                     cls_idx, TRANSITION_SEC, 'transition_in')
+                tr_in = record_phase(model, scale, cls_idx, TRANSITION_SEC, 'transition_in')
                 all_records.extend(tr_in)
                 _phase_summary(tr_in, cls_idx, 'transition in')
 
-                # ── Hold ───────────────────────────────────────────────
                 print(f'  HOLD {cls.upper()}', flush=True)
-                hold = record_phase(model, scaler, scale,
-                                    cls_idx, args.hold, 'hold')
+                hold = record_phase(model, scale, cls_idx, args.hold, 'hold')
                 all_records.extend(hold)
                 _phase_summary(hold, cls_idx, 'hold')
 
-                # ── Transition out ─────────────────────────────────────
                 print(f'  RELEASE back to rest', flush=True)
-                tr_out = record_phase(model, scaler, scale,
-                                      REST_IDX, TRANSITION_SEC, 'transition_out')
+                tr_out = record_phase(model, scale, REST_IDX, TRANSITION_SEC, 'transition_out')
                 all_records.extend(tr_out)
                 _phase_summary(tr_out, REST_IDX, 'transition out')
 
@@ -567,7 +506,7 @@ def main():
     if tr_out is not None:
         print(f'\n  Transition-out (→ rest) acc. : {tr_out:.3f}')
 
-    out_dir = os.path.join('inference_eval_bpnn',
+    out_dir = os.path.join('inference_eval_rf',
                            datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
     print(f'\n── Saving to {out_dir}/ ──────────────────────────────')
     save_all(all_records, metrics, out_dir)
