@@ -42,7 +42,7 @@ from pyomyo import Myo, emg_mode
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-RESULTS_DIR    = 'results_steady'   # overridable via --results
+RESULTS_DIR    = 'pre_demo_training_results_RF/results_rf_all_phases'   # overridable via --results
 CLASSES        = ['cylindrical', 'lateral', 'palm', 'rest']
 REST_IDX       = CLASSES.index('rest')
 WINDOW_SIZE    = 40

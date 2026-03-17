@@ -32,7 +32,7 @@ from pyomyo import Myo, emg_mode
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-MODEL_PATH   = 'results_all_phases/model.joblib'   # or 'results_steady/model.joblib'
+MODEL_PATH   = 'pre_demo_training_results_RF/results_rf_all_phases/model.joblib'   # or 'results_steady/model.joblib'
 CLASSES      = ['cylindrical', 'lateral', 'palm', 'rest']
 WINDOW_SIZE  = 40        # 200ms at 200Hz
 STRIDE       = 20        # 50% overlap → predict every 100ms
