@@ -11,9 +11,10 @@ Each trial has three recorded phases:
   transition_out (2s) — user relaxes back to rest
                         ground truth = rest
 
-20 trials are run per gesture group, distributed evenly across specific
-sub-class variants within each group. Sub-class is recorded in every
-prediction so per-variant accuracy can be analysed after the session.
+30 trials are run per gesture group, distributed evenly across specific
+sub-class variants (6 per cylindrical/lateral variant, 15 per palm variant).
+Sub-class is recorded in every prediction so per-variant accuracy can be
+analysed after the session.
 Rest is not a hold target — only appears as transition_out ground truth.
 
 Between trials there is a REST_GAP_SEC rest period.
@@ -264,6 +265,18 @@ def drain_queue():
             _emg_queue.get_nowait()
         except queue.Empty:
             break
+
+
+def _post_trial_action():
+    '''Prompt after each trial. Returns "continue", "redo", or "pause".'''
+    while True:
+        resp = input('  → [Enter] continue  [r] redo  [p] pause : ').strip().lower()
+        if resp == '':
+            return 'continue'
+        if resp == 'r':
+            return 'redo'
+        if resp == 'p':
+            return 'pause'
 
 
 def record_phase(model, scaler, scale, true_idx, sub_class, duration, phase, trial_num=0):
@@ -666,19 +679,20 @@ def plot_timeline(records, path):
     print(f'  Saved {path}')
 
 
-# ── Save ──────────────────────────────────────────────────────────────────────
+# ── Incremental save ──────────────────────────────────────────────────────────
 
-def save_all(records, metrics, out_dir):
-    os.makedirs(out_dir, exist_ok=True)
-
+def _write_csv(records, out_dir):
+    '''Write all records to predictions.csv (overwrites). Returns path.'''
     csv_path = os.path.join(out_dir, 'predictions.csv')
     with open(csv_path, 'w', newline='') as f:
         w = csv.writer(f)
-        w.writerow(['t', 'phase', 'sub_class', 'true_group', 'raw_pred', 'smoothed_pred',
-                    'conf_cyl', 'conf_lat', 'conf_palm', 'conf_rest', 'infer_ms'])
+        w.writerow(['t', 'trial', 'phase', 'sub_class', 'true_group', 'raw_pred',
+                    'smoothed_pred', 'conf_cyl', 'conf_lat', 'conf_palm', 'conf_rest',
+                    'infer_ms'])
         for r in records:
             w.writerow([
                 f'{r["t"]:.4f}',
+                r['trial'],
                 r['phase'],
                 r['sub_class'],
                 CLASSES[r['true']],
@@ -687,6 +701,24 @@ def save_all(records, metrics, out_dir):
                 *[f'{p:.4f}' for p in r['proba']],
                 f'{r["infer_ms"]:.2f}',
             ])
+    return csv_path
+
+
+def _save_incremental(records, out_dir):
+    '''Write CSV + partial JSON after each trial (no plots, silent).'''
+    _write_csv(records, out_dir)
+    if records:
+        json_path = os.path.join(out_dir, 'results.json')
+        with open(json_path, 'w') as f:
+            json.dump(compute_metrics(records), f, indent=2)
+
+
+# ── Save ──────────────────────────────────────────────────────────────────────
+
+def save_all(records, metrics, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = _write_csv(records, out_dir)
     print(f'  Saved {csv_path}')
 
     json_path = os.path.join(out_dir, 'results.json')
@@ -715,22 +747,7 @@ def save_all(records, metrics, out_dir):
 def save_dynamic(records, metrics, out_dir):
     os.makedirs(out_dir, exist_ok=True)
 
-    csv_path = os.path.join(out_dir, 'predictions.csv')
-    with open(csv_path, 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['t', 'phase', 'sub_class', 'true_group', 'raw_pred', 'smoothed_pred',
-                    'conf_cyl', 'conf_lat', 'conf_palm', 'conf_rest', 'infer_ms'])
-        for r in records:
-            w.writerow([
-                f'{r["t"]:.4f}',
-                r['phase'],
-                r['sub_class'],
-                CLASSES[r['true']],
-                CLASSES[r['raw_pred']],
-                CLASSES[r['smoothed_pred']],
-                *[f'{p:.4f}' for p in r['proba']],
-                f'{r["infer_ms"]:.2f}',
-            ])
+    csv_path = _write_csv(records, out_dir)
     print(f'  Saved {csv_path}')
 
     json_path = os.path.join(out_dir, 'results.json')
@@ -865,11 +882,19 @@ def main():
     print(f'  Total time   : ~{total_sec}s ({total_sec // 60}m {total_sec % 60}s)')
     input('\n  Press Enter to begin...')
 
+    out_dir = os.path.join('inference_eval_bpnn',
+                           datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    os.makedirs(out_dir, exist_ok=True)
+    print(f'  Output → {out_dir}/')
+
     all_records = []
+    idx = 0
 
     try:
-        for trial_num, (sub_cls, group) in enumerate(schedule, 1):
-            cls_idx = GROUP_TO_INT[group]
+        while idx < len(schedule):
+            trial_num      = idx + 1
+            sub_cls, group = schedule[idx]
+            cls_idx        = GROUP_TO_INT[group]
 
             rest_gap(args.rest, sub_cls)
             print(f'\n  [{trial_num:>2}/{len(schedule)}] {sub_cls.upper()}  ({group})')
@@ -878,25 +903,39 @@ def main():
             tr_in = record_phase(model, scaler, scale,
                                  cls_idx, sub_cls, TRANSITION_SEC, 'transition_in',
                                  trial_num=trial_num)
-            all_records.extend(tr_in)
             _phase_summary(tr_in, cls_idx, 'transition in')
 
             print(f'  HOLD', flush=True)
             hold = record_phase(model, scaler, scale,
                                 cls_idx, sub_cls, args.hold, 'hold',
                                 trial_num=trial_num)
-            all_records.extend(hold)
             _phase_summary(hold, cls_idx, 'hold')
 
             print(f'  RELEASE back to rest', flush=True)
             tr_out = record_phase(model, scaler, scale,
                                   REST_IDX, sub_cls, TRANSITION_SEC, 'transition_out',
                                   trial_num=trial_num)
-            all_records.extend(tr_out)
             _phase_summary(tr_out, REST_IDX, 'transition out')
 
+            trial_recs = tr_in + hold + tr_out
+            all_records.extend(trial_recs)
+            _save_incremental(all_records, out_dir)
+
+            action = _post_trial_action()
+            if action == 'pause':
+                print('\n  ── PAUSED ──────────────────────────────────────────')
+                resp = input('  [Enter] resume  [r] redo this trial : ').strip().lower()
+                action = 'redo' if resp == 'r' else 'continue'
+
+            if action == 'redo':
+                all_records = [r for r in all_records if r['trial'] != trial_num]
+                _save_incremental(all_records, out_dir)
+                print(f'  ↺ Redoing trial {trial_num} ({sub_cls})...')
+            else:
+                idx += 1
+
     except KeyboardInterrupt:
-        print('\n  Interrupted — saving partial results...')
+        print('\n  Interrupted — results saved to disk.')
     finally:
         _stop_event.set()
         myo_thread.join(timeout=3)
@@ -914,14 +953,17 @@ def main():
     print(f'  Mean inference time         : {metrics["mean_infer_ms"]:.1f} ± {metrics["std_infer_ms"]:.1f} ms')
     print(f'  Total predictions           : {metrics["n_predictions"]}')
     print()
-    print(f'  {"sub-class":<36}  {"hold":>6}  {"tr-in":>6}  {"tr-out":>7}')
-    print('  ' + '─' * 62)
+    print(f'  Sub-class accuracy  (n≤{N_SAMPLE_TRIALS} trials/variant sampled)')
+    print(f'  {"sub-class":<36}  {"hold":>6}  {"tr-in":>6}  {"tr-out":>7}  {"trials":>6}')
+    print('  ' + '─' * 70)
     for group in GROUPS_ORDERED:
         for variant in GROUP_VARIANTS[group]:
+            n_trials = len({r['trial'] for r in all_records
+                            if r['sub_class'] == variant and r['phase'] == 'hold'})
             h  = metrics['hold_acc_per_subclass'].get(variant, float('nan'))
             ti = metrics['transition_in_acc_per_subclass'].get(variant, float('nan'))
             to = metrics['transition_out_acc_per_subclass'].get(variant, float('nan'))
-            print(f'  {variant:<36}  {h:>6.3f}  {ti:>6.3f}  {to:>7.3f}')
+            print(f'  {variant:<36}  {h:>6.3f}  {ti:>6.3f}  {to:>7.3f}  {n_trials:>6}')
         print()
 
     tr_out_overall = metrics.get('transition_out_rest_acc')
@@ -938,9 +980,7 @@ def main():
         print(f'  {group:<14}  {h:>6.3f}  {ti:>6.3f}  {to:>7.3f}')
     print()
 
-    out_dir = os.path.join('inference_eval_bpnn',
-                           datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    print(f'\n── Saving to {out_dir}/ ──────────────────────────────')
+    print(f'\n── Saving final results to {out_dir}/ ───────────────')
     save_all(all_records, metrics, out_dir)
     print('\nDone.')
 
