@@ -1,0 +1,368 @@
+{
+  "hold": {
+    "raw_balanced_acc": 0.8963569349554334,
+    "smoothed_balanced_acc": 0.9043131763691076,
+    "raw_report": {
+      "cylindrical": {
+        "precision": 0.7857701329163409,
+        "recall": 0.9985096870342772,
+        "f1-score": 0.8794574491358564,
+        "support": 2013.0
+      },
+      "lateral": {
+        "precision": 0.9652406417112299,
+        "recall": 0.718407960199005,
+        "f1-score": 0.8237307472903593,
+        "support": 2010.0
+      },
+      "palm": {
+        "precision": 0.9883720930232558,
+        "recall": 0.9721531576330183,
+        "f1-score": 0.9801955377287541,
+        "support": 2011.0
+      },
+      "micro avg": {
+        "precision": 0.8967175066312998,
+        "recall": 0.8964202850513755,
+        "f1-score": 0.896568871208354,
+        "support": 6034.0
+      },
+      "macro avg": {
+        "precision": 0.9131276225502756,
+        "recall": 0.8963569349554334,
+        "f1-score": 0.8944612447183232,
+        "support": 6034.0
+      },
+      "weighted avg": {
+        "precision": 0.9130767726996907,
+        "recall": 0.8964202850513755,
+        "f1-score": 0.8944679936255594,
+        "support": 6034.0
+      }
+    },
+    "smoothed_report": {
+      "cylindrical": {
+        "precision": 0.7891023128185025,
+        "recall": 1.0,
+        "f1-score": 0.8821209465381245,
+        "support": 2013.0
+      },
+      "lateral": {
+        "precision": 0.9884117246080436,
+        "recall": 0.7213930348258707,
+        "f1-score": 0.8340523439746909,
+        "support": 2010.0
+      },
+      "palm": {
+        "precision": 0.9890873015873016,
+        "recall": 0.991546494281452,
+        "f1-score": 0.9903153712441023,
+        "support": 2011.0
+      },
+      "accuracy": 0.9043752071594299,
+      "macro avg": {
+        "precision": 0.9222004463379493,
+        "recall": 0.9043131763691076,
+        "f1-score": 0.9021628872523059,
+        "support": 6034.0
+      },
+      "weighted avg": {
+        "precision": 0.9221453572518854,
+        "recall": 0.9043752071594299,
+        "f1-score": 0.9021675320421384,
+        "support": 6034.0
+      }
+    },
+    "raw_cm": [
+      [
+        0.9985096870342772,
+        0.0009935419771485345,
+        0.0004967709885742673
+      ],
+      [
+        0.27064676616915423,
+        0.718407960199005,
+        0.010945273631840797
+      ],
+      [
+        0.001991040318566451,
+        0.024888003982080638,
+        0.9731209556993529
+      ]
+    ],
+    "smoothed_cm": [
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.2676616915422886,
+        0.7213930348258707,
+        0.010945273631840797
+      ],
+      [
+        0.0,
+        0.008453505718547987,
+        0.991546494281452
+      ]
+    ],
+    "n_predictions": 6034,
+    "mean_infer_ms": 26.320211168189402,
+    "std_infer_ms": 1.6235913958254118
+  },
+  "transition_in": {
+    "raw_balanced_acc": 0.8198959824922997,
+    "smoothed_balanced_acc": 0.7953739989785439,
+    "raw_report": {
+      "cylindrical": {
+        "precision": 0.8353658536585366,
+        "recall": 0.8106508875739645,
+        "f1-score": 0.8228228228228228,
+        "support": 676.0
+      },
+      "lateral": {
+        "precision": 0.9206349206349206,
+        "recall": 0.6783625730994152,
+        "f1-score": 0.7811447811447811,
+        "support": 684.0
+      },
+      "palm": {
+        "precision": 0.7653179190751445,
+        "recall": 0.9706744868035191,
+        "f1-score": 0.8558500323206205,
+        "support": 682.0
+      },
+      "micro avg": {
+        "precision": 0.8266666666666667,
+        "recall": 0.8197845249755142,
+        "f1-score": 0.8232112121957217,
+        "support": 2042.0
+      },
+      "macro avg": {
+        "precision": 0.8404395644562005,
+        "recall": 0.8198959824922997,
+        "f1-score": 0.8199392120960748,
+        "support": 2042.0
+      },
+      "weighted avg": {
+        "precision": 0.8405330184117066,
+        "recall": 0.8197845249755142,
+        "f1-score": 0.8198927426904612,
+        "support": 2042.0
+      }
+    },
+    "smoothed_report": {
+      "cylindrical": {
+        "precision": 0.8620689655172413,
+        "recall": 0.7766272189349113,
+        "f1-score": 0.8171206225680934,
+        "support": 676.0
+      },
+      "lateral": {
+        "precision": 0.9226069246435845,
+        "recall": 0.6622807017543859,
+        "f1-score": 0.7710638297872341,
+        "support": 684.0
+      },
+      "palm": {
+        "precision": 0.7146017699115044,
+        "recall": 0.9472140762463344,
+        "f1-score": 0.8146279949558638,
+        "support": 682.0
+      },
+      "micro avg": {
+        "precision": 0.810379241516966,
+        "recall": 0.7952987267384917,
+        "f1-score": 0.8027681660899654,
+        "support": 2042.0
+      },
+      "macro avg": {
+        "precision": 0.8330925533574435,
+        "recall": 0.7953739989785439,
+        "f1-score": 0.8009374824370638,
+        "support": 2042.0
+      },
+      "weighted avg": {
+        "precision": 0.8330950853210152,
+        "recall": 0.7952987267384917,
+        "f1-score": 0.8008606723753176,
+        "support": 2042.0
+      }
+    },
+    "raw_cm": [
+      [
+        0.8118518518518518,
+        0.05925925925925926,
+        0.1288888888888889
+      ],
+      [
+        0.15080527086383602,
+        0.6793557833089312,
+        0.1698389458272328
+      ],
+      [
+        0.0074962518740629685,
+        0.0,
+        0.992503748125937
+      ]
+    ],
+    "smoothed_cm": [
+      [
+        0.78125,
+        0.05654761904761905,
+        0.16220238095238096
+      ],
+      [
+        0.11730205278592376,
+        0.6642228739002932,
+        0.218475073313783
+      ],
+      [
+        0.006153846153846154,
+        0.0,
+        0.9938461538461538
+      ]
+    ],
+    "n_predictions": 2042,
+    "mean_infer_ms": 26.39022770494368,
+    "std_infer_ms": 1.6275010194621997
+  },
+  "transition_out": {
+    "raw_balanced_acc": 0.38897243107769425,
+    "smoothed_balanced_acc": 0.3573934837092732,
+    "raw_report": {
+      "rest": {
+        "precision": 1.0,
+        "recall": 0.38897243107769425,
+        "f1-score": 0.5600866113316493,
+        "support": 1995.0
+      },
+      "micro avg": {
+        "precision": 1.0,
+        "recall": 0.38897243107769425,
+        "f1-score": 0.5600866113316493,
+        "support": 1995.0
+      },
+      "macro avg": {
+        "precision": 1.0,
+        "recall": 0.38897243107769425,
+        "f1-score": 0.5600866113316493,
+        "support": 1995.0
+      },
+      "weighted avg": {
+        "precision": 1.0,
+        "recall": 0.38897243107769425,
+        "f1-score": 0.5600866113316493,
+        "support": 1995.0
+      }
+    },
+    "smoothed_report": {
+      "rest": {
+        "precision": 1.0,
+        "recall": 0.3573934837092732,
+        "f1-score": 0.5265878877400295,
+        "support": 1995.0
+      },
+      "micro avg": {
+        "precision": 1.0,
+        "recall": 0.3573934837092732,
+        "f1-score": 0.5265878877400295,
+        "support": 1995.0
+      },
+      "macro avg": {
+        "precision": 1.0,
+        "recall": 0.3573934837092732,
+        "f1-score": 0.5265878877400295,
+        "support": 1995.0
+      },
+      "weighted avg": {
+        "precision": 1.0,
+        "recall": 0.3573934837092732,
+        "f1-score": 0.5265878877400295,
+        "support": 1995.0
+      }
+    },
+    "raw_cm": [
+      [
+        1.0
+      ]
+    ],
+    "smoothed_cm": [
+      [
+        1.0
+      ]
+    ],
+    "n_predictions": 1995,
+    "mean_infer_ms": 26.3449064255482,
+    "std_infer_ms": 3.359690728966206
+  },
+  "hold_acc_per_group": {
+    "cylindrical": 0.9985099256194276,
+    "lateral": 0.718407960199005,
+    "palm": 0.972147216205256
+  },
+  "transition_in_acc_per_group": {
+    "cylindrical": 0.8100010894432945,
+    "lateral": 0.6789724602418985,
+    "palm": 0.9706906782940736
+  },
+  "transition_out_acc_per_group": {
+    "cylindrical": 0.07238550922761448,
+    "lateral": 0.44596136806663117,
+    "palm": 0.6477385798281321
+  },
+  "transition_out_rest_acc": 0.38897243107769425,
+  "hold_acc_per_subclass": {
+    "cylindrical forward vertical": 1.0,
+    "cylindrical forward horizontal": 1.0,
+    "cylindrical by side down": 1.0,
+    "cylindrical by side outstretched horizontal": 0.9940298507462687,
+    "cylindrical by side outstretched vertical": 0.9970326409495549,
+    "lateral palm down": 1.0,
+    "lateral forward": 0.5761194029850746,
+    "lateral by side down": 0.7611940298507462,
+    "lateral by side outstretched vertical": 0.34328358208955223,
+    "lateral by side outstretched horizontal": 0.9134328358208955,
+    "palm forward": 0.991044776119403,
+    "palm by side outstretched": 0.9910714285714286
+  },
+  "transition_in_acc_per_subclass": {
+    "cylindrical forward vertical": 0.9122807017543859,
+    "cylindrical forward horizontal": 0.7678571428571429,
+    "cylindrical by side down": 0.8521739130434782,
+    "cylindrical by side outstretched horizontal": 0.7297297297297297,
+    "cylindrical by side outstretched vertical": 0.8378378378378378,
+    "lateral palm down": 0.956140350877193,
+    "lateral forward": 0.7699115044247787,
+    "lateral by side down": 0.5350877192982456,
+    "lateral by side outstretched vertical": 0.21739130434782608,
+    "lateral by side outstretched horizontal": 0.8434782608695652,
+    "palm forward": 0.9478260869565217,
+    "palm by side outstretched": 0.9912280701754386
+  },
+  "transition_out_acc_per_subclass": {
+    "cylindrical forward vertical": 0.16363636363636364,
+    "cylindrical forward horizontal": 0.036036036036036036,
+    "cylindrical by side down": 0.12727272727272726,
+    "cylindrical by side outstretched horizontal": 0.018018018018018018,
+    "cylindrical by side outstretched vertical": 0.07207207207207207,
+    "lateral palm down": 0.4774774774774775,
+    "lateral forward": 0.49557522123893805,
+    "lateral by side down": 0.5225225225225225,
+    "lateral by side outstretched vertical": 0.4,
+    "lateral by side outstretched horizontal": 0.38738738738738737,
+    "palm forward": 0.6216216216216216,
+    "palm by side outstretched": 0.6727272727272727
+  },
+  "n_sample_trials": 5,
+  "mean_infer_ms": 26.339299720119005,
+  "std_infer_ms": 2.0864269649110994,
+  "n_predictions": 10071,
+  "class_order": [
+    "cylindrical",
+    "lateral",
+    "palm",
+    "rest"
+  ]
+}

@@ -349,19 +349,24 @@ def _acc_metrics(recs):
     y_raw      = np.array([r['raw_pred']      for r in recs])
     y_smoothed = np.array([r['smoothed_pred'] for r in recs])
     infer_ms   = np.array([r['infer_ms']      for r in recs])
+    
+    # Get unique labels present in the data
+    unique_labels = np.sort(np.unique(y_true))
+    target_names = [CLASSES[i] for i in unique_labels]
+    
     return {
         'raw_balanced_acc':      float(balanced_accuracy_score(y_true, y_raw)),
         'smoothed_balanced_acc': float(balanced_accuracy_score(y_true, y_smoothed)),
         'raw_report':      classification_report(y_true, y_raw,
-                               target_names=CLASSES, output_dict=True,
-                               zero_division=0),
+                               target_names=target_names, output_dict=True,
+                               labels=unique_labels, zero_division=0),
         'smoothed_report': classification_report(y_true, y_smoothed,
-                               target_names=CLASSES, output_dict=True,
-                               zero_division=0),
+                               target_names=target_names, output_dict=True,
+                               labels=unique_labels, zero_division=0),
         'raw_cm':      confusion_matrix(y_true, y_raw,
-                           labels=range(len(CLASSES)), normalize='true').tolist(),
+                           labels=unique_labels, normalize='true').tolist(),
         'smoothed_cm': confusion_matrix(y_true, y_smoothed,
-                           labels=range(len(CLASSES)), normalize='true').tolist(),
+                           labels=unique_labels, normalize='true').tolist(),
         'n_predictions':  len(recs),
         'mean_infer_ms':  float(infer_ms.mean()),
         'std_infer_ms':   float(infer_ms.std()),
@@ -466,16 +471,20 @@ def compute_dynamic_metrics(records):
     y_true   = np.array([r['true']     for r in records])
     y_raw    = np.array([r['raw_pred'] for r in records])
     infer_ms = np.array([r['infer_ms'] for r in records])
+    
+    unique_labels = np.sort(np.unique(y_true))
+    class_order = [CLASSES[i] for i in unique_labels]
+    
     return {
         'dynamic_acc_per_position': acc_per_pos,
         'dynamic_acc_per_group':    acc_per_group,
         'raw_balanced_acc':  float(balanced_accuracy_score(y_true, y_raw)),
         'raw_cm':  confusion_matrix(y_true, y_raw,
-                       labels=range(len(CLASSES)), normalize='true').tolist(),
+                       labels=unique_labels, normalize='true').tolist(),
         'mean_infer_ms':  float(infer_ms.mean()),
         'std_infer_ms':   float(infer_ms.std()),
         'n_predictions':  len(records),
-        'class_order':    CLASSES,
+        'class_order':    class_order,
     }
 
 
@@ -483,7 +492,9 @@ def compute_dynamic_metrics(records):
 
 def plot_confusion_matrix(cm_data, title, path):
     fig, ax = plt.subplots(figsize=(7, 6))
-    ConfusionMatrixDisplay(np.array(cm_data), display_labels=CLASSES).plot(
+    n_classes = len(cm_data)
+    display_labels = CLASSES[:n_classes]
+    ConfusionMatrixDisplay(np.array(cm_data), display_labels=display_labels).plot(
         ax=ax, colorbar=True, cmap='Blues', values_format='.2f')
     ax.set_title(title)
     plt.tight_layout()
