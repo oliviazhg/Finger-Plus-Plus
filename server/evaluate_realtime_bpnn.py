@@ -2,34 +2,35 @@
 Structured Real-time Evaluation — BPNN
 
 Runs a prompted evaluation session with the Myo armband.
-Each trial has three recorded phases:
 
-  transition_in  (2s) — user moves from rest into the gesture
-                        ground truth = target group (cylindrical/lateral/palm)
-  hold           (Xs) — user holds gesture steady
-                        ground truth = target group
-  transition_out (2s) — user relaxes back to rest
-                        ground truth = rest
+Modes
+-----
+static (default)
+  Each trial has three recorded phases:
+    transition_in  (2s) — user moves from rest into the gesture
+    hold           (Xs) — user holds gesture steady
+    transition_out (2s) — user relaxes back to rest
+  30 trials per gesture group (6 per cyl/lat variant, 15 per palm variant).
 
-30 trials are run per gesture group, distributed evenly across specific
-sub-class variants (6 per cylindrical/lateral variant, 15 per palm variant).
-Sub-class is recorded in every prediction so per-variant accuracy can be
-analysed after the session.
-Rest is not a hold target — only appears as transition_out ground truth.
+dynamic
+  Continuous position sweep — user holds each position for DYNAMIC_SEC seconds.
+
+rest
+  30 trials of rest — measures false-activation rate across all 4 output classes.
+  Each trial records HOLD_SEC seconds of rest with the model running inference.
 
 Between trials there is a REST_GAP_SEC rest period.
 
 Outputs saved to a timestamped folder under inference_eval_bpnn/:
-  predictions.csv              — per-prediction log with sub_class + phase
-  results.json                 — hold + transition metrics (group + sub-class)
-  confusion_matrix_raw.png     — hold phase, group-level
-  confusion_matrix_smoothed.png
-  confidence_histogram.png     — hold phase
-  subclass_accuracy.png        — hold + transition accuracy per sub-class variant
-  timeline.png                 — prediction timeline per group
+  static/dynamic:
+    predictions.csv, results.json, confusion matrices, confidence_histogram,
+    subclass_accuracy, group_accuracy, timeline
+  rest:
+    predictions.csv, results.json, confusion_rest.png, accuracy_per_trial.png
 
 Usage:
   python evaluate_realtime_bpnn.py
+  python evaluate_realtime_bpnn.py --mode rest
   python evaluate_realtime_bpnn.py --hold 8 --rest 7
 '''
 
@@ -87,6 +88,7 @@ GROUP_VARIANTS = {
 GROUPS_ORDERED   = ['cylindrical', 'lateral', 'palm']
 TRIALS_PER_GROUP = 30   # 30÷5=6 per cyl/lat variant, 30÷2=15 per palm variant
 N_SAMPLE_TRIALS  = 5    # trials sampled per variant for variant-level comparison
+REST_TRIALS      = 30   # number of rest trials in rest mode
 
 DYNAMIC_SEC = 2.5   # seconds per position in dynamic mode
 
@@ -499,6 +501,38 @@ def compute_dynamic_metrics(records):
     }
 
 
+def compute_rest_metrics(records):
+    '''Metrics for a rest-only evaluation session.'''
+    y_raw    = np.array([r['raw_pred']      for r in records])
+    y_smooth = np.array([r['smoothed_pred'] for r in records])
+    infer_ms = np.array([r['infer_ms']      for r in records])
+
+    trials = sorted({r['trial'] for r in records})
+    per_trial_acc = {
+        t: float((np.array([r['raw_pred'] for r in records if r['trial'] == t])
+                  == REST_IDX).mean())
+        for t in trials
+    }
+    pred_counts = {c: int((y_raw == i).sum()) for i, c in enumerate(CLASSES)}
+    cm_row = confusion_matrix(
+        [REST_IDX] * len(records), y_raw,
+        labels=range(len(CLASSES)), normalize='true'
+    ).tolist()[REST_IDX]
+
+    return {
+        'rest_acc_raw':      float((y_raw    == REST_IDX).mean()),
+        'rest_acc_smooth':   float((y_smooth == REST_IDX).mean()),
+        'per_trial_acc':     per_trial_acc,
+        'pred_distribution': pred_counts,
+        'confusion_row':     cm_row,
+        'mean_infer_ms':     float(infer_ms.mean()),
+        'std_infer_ms':      float(infer_ms.std()),
+        'n_predictions':     len(records),
+        'n_trials':          len(trials),
+        'class_order':       CLASSES,
+    }
+
+
 # ── Plots ─────────────────────────────────────────────────────────────────────
 
 def plot_confusion_matrix(cm_data, title, path):
@@ -641,6 +675,51 @@ def plot_dynamic_accuracy(metrics, path):
     print(f'  Saved {path}')
 
 
+def plot_confusion_rest(metrics, path):
+    '''Bar chart of predicted class distribution during rest.'''
+    row    = metrics['confusion_row']
+    x      = np.arange(len(CLASSES))
+    colors = ['steelblue' if c == 'rest' else 'tomato' for c in CLASSES]
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.bar(x, row, color=colors, alpha=0.85, edgecolor='white')
+    ax.set_xticks(x)
+    ax.set_xticklabels(CLASSES)
+    ax.set_ylabel('Fraction of predictions')
+    ax.set_ylim(0, 1.1)
+    ax.set_title(
+        f'Predicted class distribution during rest\n'
+        f'raw accuracy: {metrics["rest_acc_raw"]:.3f}  '
+        f'smoothed: {metrics["rest_acc_smooth"]:.3f}'
+    )
+    for xi, v in enumerate(row):
+        ax.text(xi, v + 0.02, f'{v:.3f}', ha='center', va='bottom', fontsize=9)
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_per_trial_accuracy(metrics, path):
+    '''Line plot of rest accuracy per trial — reveals drift over time.'''
+    per_trial = metrics['per_trial_acc']
+    trials    = sorted(per_trial)
+    accs      = [per_trial[t] for t in trials]
+    mean_acc  = float(np.mean(accs))
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(trials, accs, marker='o', color='steelblue', markersize=5)
+    ax.axhline(mean_acc, color='tomato', linestyle='--',
+               label=f'mean = {mean_acc:.3f}')
+    ax.set_xlabel('Trial')
+    ax.set_ylabel('Rest accuracy (raw)')
+    ax.set_ylim(-0.05, 1.1)
+    ax.set_title('Rest accuracy per trial')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
 def plot_timeline(records, path):
     '''One row per gesture group — markers differ by phase, colour by correct/incorrect.'''
     MARKERS   = {'transition_in': '^', 'hold': 'o', 'transition_out': 'v'}
@@ -762,13 +841,40 @@ def save_dynamic(records, metrics, out_dir):
     plot_dynamic_accuracy(metrics, os.path.join(out_dir, 'dynamic_accuracy.png'))
 
 
+# ── Save (rest) ───────────────────────────────────────────────────────────────
+
+def _save_rest_incremental(records, out_dir):
+    '''Write CSV + partial JSON after each rest trial (no plots, silent).'''
+    _write_csv(records, out_dir)
+    if records:
+        json_path = os.path.join(out_dir, 'results.json')
+        with open(json_path, 'w') as f:
+            json.dump(compute_rest_metrics(records), f, indent=2)
+
+
+def save_rest(records, metrics, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = _write_csv(records, out_dir)
+    print(f'  Saved {csv_path}')
+
+    json_path = os.path.join(out_dir, 'results.json')
+    with open(json_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f'  Saved {json_path}')
+
+    plot_confusion_rest(metrics,     os.path.join(out_dir, 'confusion_rest.png'))
+    plot_per_trial_accuracy(metrics, os.path.join(out_dir, 'accuracy_per_trial.png'))
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description='Real-time BPNN evaluation')
-    parser.add_argument('--mode', choices=['static', 'dynamic'], default='static',
+    parser.add_argument('--mode', choices=['static', 'dynamic', 'rest'], default='static',
                         help='static: trial schedule with hold phases; '
-                             'dynamic: continuous position sweep')
+                             'dynamic: continuous position sweep; '
+                             'rest: 30 rest trials measuring false-activation rate')
     parser.add_argument('--hold', type=int, default=HOLD_SEC,
                         help='Hold duration in seconds (static mode)')
     parser.add_argument('--rest', type=int, default=REST_GAP_SEC,
@@ -860,6 +966,79 @@ def main():
                                datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_dynamic')
         print(f'\n── Saving to {out_dir}/ ──────────────────────────────')
         save_dynamic(all_records, metrics, out_dir)
+        print('\nDone.')
+        return
+
+    # ── Rest mode ─────────────────────────────────────────────────────────────
+    if args.mode == 'rest':
+        total_sec = REST_TRIALS * (args.rest + args.hold)
+        print(f'\n── Rest session plan ─────────────────────────────────')
+        print(f'  Trials      : {REST_TRIALS}')
+        print(f'  Hold per trial : {args.hold}s')
+        print(f'  Rest gap    : {args.rest}s')
+        print(f'  Total time  : ~{total_sec}s ({total_sec // 60}m {total_sec % 60}s)')
+        input('\n  Press Enter to begin...')
+
+        out_dir = os.path.join('inference_eval_bpnn',
+                               datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_rest')
+        os.makedirs(out_dir, exist_ok=True)
+        print(f'  Output → {out_dir}/')
+
+        all_records = []
+        idx = 0
+
+        try:
+            while idx < REST_TRIALS:
+                trial_num = idx + 1
+                rest_gap(args.rest, 'REST')
+                print(f'\n  [{trial_num:>2}/{REST_TRIALS}] REST — stay relaxed')
+
+                recs = record_phase(model, scaler, scale,
+                                    REST_IDX, 'rest', args.hold, 'rest',
+                                    trial_num=trial_num)
+                _phase_summary(recs, REST_IDX, 'rest')
+
+                all_records.extend(recs)
+                _save_rest_incremental(all_records, out_dir)
+
+                action = _post_trial_action()
+                if action == 'pause':
+                    print('\n  ── PAUSED ──────────────────────────────────────────')
+                    resp = input('  [Enter] resume  [r] redo this trial : ').strip().lower()
+                    action = 'redo' if resp == 'r' else 'continue'
+
+                if action == 'redo':
+                    all_records = [r for r in all_records if r['trial'] != trial_num]
+                    _save_rest_incremental(all_records, out_dir)
+                    print(f'  ↺ Redoing trial {trial_num}...')
+                else:
+                    idx += 1
+
+        except KeyboardInterrupt:
+            print('\n  Interrupted — results saved to disk.')
+        finally:
+            _stop_event.set()
+            myo_thread.join(timeout=3)
+
+        if not all_records:
+            print('No predictions recorded.')
+            return
+
+        print('\n── Rest results ──────────────────────────────────────')
+        metrics = compute_rest_metrics(all_records)
+        print(f'  Rest accuracy (raw)     : {metrics["rest_acc_raw"]:.3f}')
+        print(f'  Rest accuracy (smoothed): {metrics["rest_acc_smooth"]:.3f}')
+        print(f'  Mean inference time     : {metrics["mean_infer_ms"]:.1f} ± {metrics["std_infer_ms"]:.1f} ms')
+        print(f'  Total predictions       : {metrics["n_predictions"]}  ({metrics["n_trials"]} trials)')
+        print()
+        print('  Predicted class distribution:')
+        for cls, count in metrics['pred_distribution'].items():
+            pct = count / metrics['n_predictions'] * 100 if metrics['n_predictions'] else 0
+            bar = '#' * int(pct / 2)
+            print(f'    {cls:<12}  {count:>4}  ({pct:>5.1f}%)  {bar}')
+
+        print(f'\n── Saving final results to {out_dir}/ ───────────────')
+        save_rest(all_records, metrics, out_dir)
         print('\nDone.')
         return
 

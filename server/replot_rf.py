@@ -4,11 +4,12 @@ Re-generate plots and metrics from an existing RF evaluation session.
 Reads predictions.csv from the specified folder, recomputes all metrics
 using the current code, and writes/overwrites all plots.
 
-Works for static, dynamic, and rest sessions.
+Works for static, dynamic, rest, and merged (gesture + rest) sessions.
 
 Usage:
   python replot_rf.py --dir inference_eval_rf/2026-03-16_12-00-00
   python replot_rf.py --dir inference_eval_rf/2026-03-16_12-00-00 --out /some/other/dir
+  python replot_rf.py --dir inference_eval_rf/2026-03-16_static --dir2 inference_eval_rf/2026-03-16_rest
 '''
 
 import sys
@@ -125,12 +126,28 @@ def _plot_per_trial_accuracy(metrics, path):
 
 # ── CSV loader ────────────────────────────────────────────────────────────────
 
+def _safe_float(val, default=0.0):
+    '''Parse float, returning default on non-numeric strings (e.g. header rows).'''
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
 def load_records(csv_path):
-    '''Reconstruct internal record dicts from a predictions.csv file.'''
+    '''Reconstruct internal record dicts from a predictions.csv file.
+
+    Skips embedded header rows (identified by non-numeric 't' field) that can
+    appear when two sessions are concatenated.
+    '''
     records = []
     with open(csv_path, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
+            # Skip embedded header rows
+            if _safe_float(row.get('t'), None) is None:
+                continue
+
             true_group = row.get('true_group', 'rest')
             raw_pred   = row.get('raw_pred',   'rest')
             sm_pred    = row.get('smoothed_pred', raw_pred)
@@ -140,21 +157,21 @@ def load_records(csv_path):
             sm_idx   = CLASSES.index(sm_pred)    if sm_pred    in CLASSES else REST_IDX
 
             proba = [
-                float(row.get('conf_cyl',  0)),
-                float(row.get('conf_lat',  0)),
-                float(row.get('conf_palm', 0)),
-                float(row.get('conf_rest', 0)),
+                _safe_float(row.get('conf_cyl',  0)),
+                _safe_float(row.get('conf_lat',  0)),
+                _safe_float(row.get('conf_palm', 0)),
+                _safe_float(row.get('conf_rest', 0)),
             ]
             records.append({
-                't':             float(row.get('t', 0)),
-                'trial':         int(row.get('trial', 0)),
+                't':             _safe_float(row.get('t', 0)),
+                'trial':         int(_safe_float(row.get('trial', 0))),
                 'phase':         row.get('phase', 'hold'),
                 'sub_class':     row.get('sub_class', ''),
                 'true':          true_idx,
                 'raw_pred':      raw_idx,
                 'smoothed_pred': sm_idx,
                 'proba':         proba,
-                'infer_ms':      float(row.get('infer_ms', 0)),
+                'infer_ms':      _safe_float(row.get('infer_ms', 0)),
             })
     return records
 
@@ -173,15 +190,43 @@ def detect_mode(records):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _merge_rest_records(gesture_records, rest_records):
+    '''Merge rest records into a gesture dataset for combined analysis.
+
+    Rest records are normalised to look like gesture hold records:
+      - phase     = 'hold'
+      - sub_class = 'rest'
+      - trial numbers offset so they don't collide with gesture trial numbers
+    '''
+    if not gesture_records:
+        trial_offset = 0
+    else:
+        trial_offset = max(r['trial'] for r in gesture_records) + 1
+
+    normalised = []
+    for r in rest_records:
+        nr = dict(r)
+        nr['phase']     = 'hold'
+        nr['sub_class'] = 'rest'
+        nr['trial']     = r['trial'] + trial_offset
+        normalised.append(nr)
+    return gesture_records + normalised
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Re-generate RF evaluation plots from an existing session folder'
     )
     parser.add_argument('--dir', required=True,
                         help='Path to the existing session folder containing predictions.csv')
+    parser.add_argument('--dir2', default=None,
+                        help='Optional second folder to merge (e.g. a rest-only session)')
     parser.add_argument('--out', default=None,
                         help='Output folder for plots (default: same as --dir)')
     args = parser.parse_args()
+
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
     csv_path = os.path.join(args.dir, 'predictions.csv')
     if not os.path.exists(csv_path):
@@ -195,8 +240,34 @@ def main():
     records = load_records(csv_path)
     print(f'  {len(records)} predictions loaded')
 
-    mode = detect_mode(records)
-    print(f'  Detected mode: {mode}')
+    # ── Optional merge ─────────────────────────────────────────────────────────
+    rest_records_extra = []
+    if args.dir2:
+        csv_path2 = os.path.join(args.dir2, 'predictions.csv')
+        if not os.path.exists(csv_path2):
+            print(f'Error: {csv_path2} not found.')
+            return
+        print(f'Loading {csv_path2}...')
+        records2 = load_records(csv_path2)
+        print(f'  {len(records2)} predictions loaded from dir2')
+
+        mode1 = detect_mode(records)
+        mode2 = detect_mode(records2)
+        print(f'  dir1 mode: {mode1}   dir2 mode: {mode2}')
+
+        # Treat dir1 as the gesture session, dir2 as the rest session
+        # (swap if the user passed them in the other order)
+        if mode1 == 'rest' and mode2 != 'rest':
+            records, records2 = records2, records
+            mode1, mode2 = mode2, mode1
+
+        rest_records_extra = records2
+        records = _merge_rest_records(records, records2)
+        mode = 'merged'
+        print(f'  Merged: {len(records)} total predictions  (mode → merged)')
+    else:
+        mode = detect_mode(records)
+        print(f'  Detected mode: {mode}')
 
     # ── Static mode ───────────────────────────────────────────────────────────
     if mode == 'static':
@@ -311,6 +382,98 @@ def main():
             pct = count / metrics['n_predictions'] * 100 if metrics['n_predictions'] else 0
             bar = '█' * int(pct / 2)
             print(f'    {cls:<12}  {count:>4}  ({pct:>5.1f}%)  {bar}')
+
+    # ── Merged mode (gesture session + rest session) ───────────────────────────
+    elif mode == 'merged':
+        # --- Part 1: combined confusion matrix over all 4 classes (hold phase) ---
+        hold_recs = [r for r in records if r['phase'] == 'hold']
+        y_true = [r['true']      for r in hold_recs]
+        y_raw  = [r['raw_pred']  for r in hold_recs]
+
+        if y_true:
+            cm_raw = confusion_matrix(
+                y_true, y_raw, labels=range(len(CLASSES)), normalize='true'
+            ).tolist()
+            plot_confusion_matrix(
+                cm_raw,
+                'Confusion matrix — merged (raw, hold phase)',
+                os.path.join(out_dir, 'confusion_matrix_merged_raw.png'))
+
+            y_smooth = [r['smoothed_pred'] for r in hold_recs]
+            cm_smooth = confusion_matrix(
+                y_true, y_smooth, labels=range(len(CLASSES)), normalize='true'
+            ).tolist()
+            plot_confusion_matrix(
+                cm_smooth,
+                f'Confusion matrix — merged (smoothed n={SMOOTH_N}, hold phase)',
+                os.path.join(out_dir, 'confusion_matrix_merged_smoothed.png'))
+
+        # --- Part 2: gesture-only analysis (reuse existing compute_metrics) -----
+        gesture_recs = [r for r in records if r['sub_class'] != 'rest']
+        if gesture_recs:
+            print('\nGesture-only analysis...')
+            g_metrics = compute_metrics(gesture_recs)
+
+            json_path = os.path.join(out_dir, 'results_gesture.json')
+            with open(json_path, 'w') as f:
+                json.dump(g_metrics, f, indent=2)
+            print(f'  Saved {json_path}')
+
+            hold_m = g_metrics.get('hold') or {}
+            plot_confidence_histogram(gesture_recs, os.path.join(out_dir, 'confidence_histogram.png'))
+            plot_group_accuracy(g_metrics,          os.path.join(out_dir, 'group_accuracy.png'))
+            plot_subclass_accuracy(g_metrics,       os.path.join(out_dir, 'subclass_accuracy.png'))
+            plot_timeline(gesture_recs,             os.path.join(out_dir, 'timeline.png'))
+
+        # --- Part 3: rest-only analysis -----------------------------------------
+        if rest_records_extra:
+            print('\nRest-only analysis...')
+            r_metrics = _compute_rest_metrics(rest_records_extra)
+
+            json_path = os.path.join(out_dir, 'results_rest.json')
+            with open(json_path, 'w') as f:
+                json.dump(r_metrics, f, indent=2)
+            print(f'  Saved {json_path}')
+
+            _plot_confusion_rest(r_metrics,     os.path.join(out_dir, 'confusion_rest.png'))
+            _plot_per_trial_accuracy(r_metrics, os.path.join(out_dir, 'accuracy_per_trial.png'))
+
+        # --- Summary ------------------------------------------------------------
+        print()
+        print('── Merged Summary ────────────────────────────────────')
+        if gesture_recs:
+            hold_m = g_metrics.get('hold') or {}
+            print(f'  Gesture hold raw balanced acc.      : {hold_m.get("raw_balanced_acc", float("nan")):.3f}')
+            print(f'  Gesture hold smoothed balanced acc. : {hold_m.get("smoothed_balanced_acc", float("nan")):.3f}')
+            print(f'  Gesture predictions                 : {g_metrics["n_predictions"]}')
+        if rest_records_extra:
+            print(f'  Rest accuracy (raw)                 : {r_metrics["rest_acc_raw"]:.3f}')
+            print(f'  Rest accuracy (smoothed)            : {r_metrics["rest_acc_smooth"]:.3f}')
+            print(f'  Rest predictions                    : {r_metrics["n_predictions"]}  ({r_metrics["n_trials"]} trials)')
+        print(f'  Total predictions                   : {len(records)}')
+
+        if gesture_recs:
+            print()
+            print(f'  Sub-class accuracy  (n<={N_SAMPLE_TRIALS} trials/variant sampled)')
+            print(f'  {"sub-class":<36}  {"hold":>6}  {"tr-in":>6}  {"tr-out":>7}  {"trials":>6}')
+            print('  ' + '-' * 70)
+            for group in GROUPS_ORDERED:
+                for variant in GROUP_VARIANTS[group]:
+                    n_trials = len({r['trial'] for r in gesture_recs
+                                    if r['sub_class'] == variant and r['phase'] == 'hold'})
+                    h  = g_metrics['hold_acc_per_subclass'].get(variant, float('nan'))
+                    ti = g_metrics['transition_in_acc_per_subclass'].get(variant, float('nan'))
+                    to = g_metrics['transition_out_acc_per_subclass'].get(variant, float('nan'))
+                    print(f'  {variant:<36}  {h:>6.3f}  {ti:>6.3f}  {to:>7.3f}  {n_trials:>6}')
+                print()
+
+            print(f'  {"group":<14}  {"hold":>6}  {"tr-in":>6}  {"tr-out":>7}  (mean of variant accs)')
+            print('  ' + '-' * 50)
+            for group in GROUPS_ORDERED:
+                h  = g_metrics['hold_acc_per_group'].get(group, float('nan'))
+                ti = g_metrics['transition_in_acc_per_group'].get(group, float('nan'))
+                to = g_metrics['transition_out_acc_per_group'].get(group, float('nan'))
+                print(f'  {group:<14}  {h:>6.3f}  {ti:>6.3f}  {to:>7.3f}')
 
     print('\nDone.')
 
