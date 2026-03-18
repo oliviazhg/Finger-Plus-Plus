@@ -5,8 +5,8 @@
 #include <Wire.h>
 #include <Adafruit_ADS1X15.h>
 
-const char* ssid = "*";
-const char* password = "*";
+const char* ssid = "";
+const char* password = "";
 const char* mqtt_server = "172.20.10.11";
 
 WiFiClient espClient;
@@ -40,6 +40,8 @@ const int BASE_MIN = 24489;  const int BASE_MAX = 24770;
 const int MID_MIN  = 24442;  const int MID_MAX  = 24846;
 const int TIP_MIN  = 24509;  const int TIP_MAX  = 24791;
 
+String current_sys_mode = "ui";
+
 void setupMotors() {
   dxl.begin(BAUDRATE);
   dxl.setPortProtocolVersion(DXL_PROTOCOL_VERSION);
@@ -71,34 +73,57 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   memcpy(message, payload, length);
   message[length] = '\0';
 
+  if (strcmp(topic, "system/control_mode") == 0) {
+    current_sys_mode = String(message);
+    Serial.printf("[SYSTEM] Mode changed to: %s\n", message);
+    return;
+  }
+
   StaticJsonDocument<200> doc;
   DeserializationError error = deserializeJson(doc, message);
+  if (error) return;
 
-  if (error) {
-    Serial.println("Failed to parse incoming JSON.");
+  if (strcmp(topic, "fsr/finger/m1") == 0) {
+    if (current_sys_mode != "fsr") return; 
+
+    int32_t target_m1 = doc["value"];
+    target_m1 = constrain(target_m1, 0, 1600);
+    dxl.setGoalPosition(1, target_m1);
     return;
   }
-
-  int target_id = doc["id"];
-  const char* mode = doc["mode"] | "move";
   
-  if (strcmp(mode, "stop") == 0) {
-    // Read current position and set it as the goal to stop
-    int32_t current_pos = dxl.getPresentPosition(target_id);
-    dxl.setGoalPosition(target_id, current_pos);
-    Serial.printf("[UI] Motor %d Halted at %d\n", target_id, current_pos);
+  if (strcmp(topic, "fsr/finger/m2") == 0) {
+    if (current_sys_mode != "fsr") return; 
+
+    int32_t target_m2 = doc["value"];
+    target_m2 = constrain(target_m2, 2100, 5800);
+    dxl.setGoalPosition(2, target_m2);
     return;
   }
 
-  int32_t target_pos = doc["position"];
+  // STANDARD UI & MYO CONTROL
+  if (strcmp(topic, "motor/command") == 0) {
+    int target_id = doc["id"];
+    const char* mode = doc["mode"] | "move";
+    
+    if (strcmp(mode, "stop") == 0) {
+    // Read current position and set it as the goal to stop
+      int32_t current_pos = dxl.getPresentPosition(target_id);
+      dxl.setGoalPosition(target_id, current_pos);
+    Serial.printf("[UI] Motor %d Halted at %d\n", target_id, current_pos);
+      return;
+    }
 
-  if (target_id == 1) {
-    target_pos = constrain(target_pos, 0, 1600);
-  } else if (target_id == 2) {
-    target_pos = constrain(target_pos, 2300, 6500);
+    int32_t target_pos = doc["position"];
+
+    if (target_id == 1) {
+      target_pos = constrain(target_pos, 0, 1600);
+    } else if (target_id == 2) {
+      target_pos = constrain(target_pos, 2100, 5800);
+    }
+
+    dxl.setGoalPosition(target_id, target_pos);
   }
-
-  dxl.setGoalPosition(target_id, target_pos);
 }
 
 void setup() {
@@ -141,8 +166,11 @@ void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     if (client.connect("ESP32_Motor_Driver")) {
-      Serial.println("connected");
+      Serial.println("connected"); 
       client.subscribe("motor/command");
+      client.subscribe("system/control_mode"); 
+      client.subscribe("fsr/finger/m1"); 
+      client.subscribe("fsr/finger/m2"); 
       client.publish("system/logs", "[ESP32] Motor Driver Ready");
     } else {
       Serial.print("failed, rc=");
@@ -188,13 +216,9 @@ void loop() {
     float middle_ratio = constrain((float)(raw_middle - MID_MIN) / (MID_MAX - MID_MIN), 0.0, 1.0);
     float tip_ratio    = constrain((float)(raw_tip - TIP_MIN) / (TIP_MAX - TIP_MIN), 0.0, 1.0);
 
-    float base_curved   = pow(base_ratio, 1.0);
-    float middle_curved = pow(middle_ratio, 1.0);
-    float tip_curved    = pow(tip_ratio, 1.0);
-
-    int final_base   = (base_curved * 100 < 2) ? 0 : (int)(base_curved * 100);
-    int final_middle = (middle_curved * 100 < 2) ? 0 : (int)(middle_curved * 100);
-    int final_tip    = (tip_curved * 100 < 2) ? 0 : (int)(tip_curved * 100);
+    int final_base   = (base_ratio * 100 < 2.0) ? 0 : (int)(base_ratio * 100);
+    int final_middle = (middle_ratio * 100 < 2.0) ? 0 : (int)(middle_ratio * 100);
+    int final_tip    = (tip_ratio * 100 < 2.0) ? 0 : (int)(tip_ratio * 100);
 
     StaticJsonDocument<100> motorDoc;
     motorDoc["m1_pos"] = pos1;

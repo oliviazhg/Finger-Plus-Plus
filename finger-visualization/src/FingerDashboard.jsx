@@ -25,7 +25,7 @@ export default function FingerDashboard() {
       motors: [150, 4000],
     },
     myo: { state: "UNKNOWN" },
-    // system: { mode: "myo" },
+    system: { mode: "ui" },
     logs: ["Started..."],
   });
 
@@ -43,11 +43,12 @@ export default function FingerDashboard() {
   const lastTimestamp = useRef(0); // Track previous message time
   const [metrics, setMetrics] = useState({ ping: 0, delta: 0 }); // Store the math results
 
-  // useEffect(() => {
-  //   if (data.system.mode !== controlMode) {
-  //     setControlMode(data.system.mode);
-  //   }
-  // }, [data.system.mode]);
+  useEffect(() => {
+    if (data.system && data.system.mode && data.system.mode !== controlMode) {
+      setControlMode(data.system.mode);
+      setIsSimulating(false);
+    }
+  }, [data.system?.mode]);
 
   // WebSocket Logic
   useEffect(() => {

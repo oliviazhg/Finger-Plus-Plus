@@ -116,8 +116,8 @@ def on_message(client, userdata, msg):
             if target_position < 0: target_position = 0
             if target_position > 1600: target_position = 1600
         if target_id == 2:
-            if target_position < 2300: target_position = 2300
-            if target_position > 6500: target_position = 6500
+            if target_position < 2100: target_position = 2100
+            if target_position > 5800: target_position = 5800
 
         move_motor(target_id, target_position)
         
