@@ -389,6 +389,7 @@ def _acc_metrics(recs):
                            labels=unique_classes, normalize='true').tolist(),
         'smoothed_cm': confusion_matrix(y_true, y_smoothed,
                            labels=unique_classes, normalize='true').tolist(),
+        'target_names':   target_names,
         'n_predictions':  len(recs),
         'mean_infer_ms':  float(infer_ms.mean()),
         'std_infer_ms':   float(infer_ms.std()),
@@ -540,9 +541,11 @@ def compute_rest_metrics(records):
 
 # ── Plots ─────────────────────────────────────────────────────────────────────
 
-def plot_confusion_matrix(cm_data, title, path):
+def plot_confusion_matrix(cm_data, title, path, display_labels=None):
+    if display_labels is None:
+        display_labels = CLASSES[:len(cm_data)]
     fig, ax = plt.subplots(figsize=(7, 6))
-    ConfusionMatrixDisplay(np.array(cm_data), display_labels=CLASSES).plot(
+    ConfusionMatrixDisplay(np.array(cm_data), display_labels=display_labels).plot(
         ax=ax, colorbar=True, cmap='Blues', values_format='.2f')
     ax.set_title(title)
     plt.tight_layout()
@@ -814,11 +817,13 @@ def save_all(records, metrics, out_dir):
     if hold_m.get('raw_cm'):
         plot_confusion_matrix(hold_m['raw_cm'],
                               'Confusion matrix — raw predictions (hold phase)',
-                              os.path.join(out_dir, 'confusion_matrix_raw.png'))
+                              os.path.join(out_dir, 'confusion_matrix_raw.png'),
+                              display_labels=hold_m.get('target_names'))
     if hold_m.get('smoothed_cm'):
         plot_confusion_matrix(hold_m['smoothed_cm'],
                               f'Confusion matrix — smoothed (n={SMOOTH_N}, hold phase)',
-                              os.path.join(out_dir, 'confusion_matrix_smoothed.png'))
+                              os.path.join(out_dir, 'confusion_matrix_smoothed.png'),
+                              display_labels=hold_m.get('target_names'))
 
     plot_confidence_histogram(records,  os.path.join(out_dir, 'confidence_histogram.png'))
     plot_group_accuracy(metrics,        os.path.join(out_dir, 'group_accuracy.png'))
