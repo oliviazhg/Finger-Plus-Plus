@@ -1,0 +1,451 @@
+{
+  "hold": {
+    "raw_balanced_acc": 0.9902155887230514,
+    "smoothed_balanced_acc": 0.9925373134328358,
+    "raw_report": {
+      "cylindrical": {
+        "precision": 0.9989769820971867,
+        "recall": 0.9716417910447761,
+        "f1-score": 0.9851197982345523,
+        "support": 2010.0
+      },
+      "lateral": {
+        "precision": 0.9733397964129908,
+        "recall": 0.9990049751243781,
+        "f1-score": 0.9860054014240118,
+        "support": 2010.0
+      },
+      "palm": {
+        "precision": 0.9990059642147118,
+        "recall": 1.0,
+        "f1-score": 0.9995027349577325,
+        "support": 2010.0
+      },
+      "accuracy": 0.9902155887230514,
+      "macro avg": {
+        "precision": 0.9904409142416298,
+        "recall": 0.9902155887230514,
+        "f1-score": 0.9902093115387656,
+        "support": 6030.0
+      },
+      "weighted avg": {
+        "precision": 0.9904409142416298,
+        "recall": 0.9902155887230514,
+        "f1-score": 0.9902093115387655,
+        "support": 6030.0
+      }
+    },
+    "smoothed_report": {
+      "cylindrical": {
+        "precision": 1.0,
+        "recall": 0.9776119402985075,
+        "f1-score": 0.9886792452830189,
+        "support": 2010.0
+      },
+      "lateral": {
+        "precision": 0.9781021897810219,
+        "recall": 1.0,
+        "f1-score": 0.988929889298893,
+        "support": 2010.0
+      },
+      "palm": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 2010.0
+      },
+      "accuracy": 0.9925373134328358,
+      "macro avg": {
+        "precision": 0.9927007299270073,
+        "recall": 0.9925373134328358,
+        "f1-score": 0.9925363781939707,
+        "support": 6030.0
+      },
+      "weighted avg": {
+        "precision": 0.9927007299270073,
+        "recall": 0.9925373134328358,
+        "f1-score": 0.9925363781939707,
+        "support": 6030.0
+      }
+    },
+    "raw_cm": [
+      [
+        0.9716417910447761,
+        0.02736318407960199,
+        0.0009950248756218905
+      ],
+      [
+        0.0009950248756218905,
+        0.9990049751243781,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "smoothed_cm": [
+      [
+        0.9776119402985075,
+        0.022388059701492536,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "n_predictions": 6030,
+    "mean_infer_ms": 0.6907933428070769,
+    "std_infer_ms": 0.3678452754825284
+  },
+  "transition_in": {
+    "raw_balanced_acc": 0.9080391386337068,
+    "smoothed_balanced_acc": 0.900561776863873,
+    "raw_report": {
+      "cylindrical": {
+        "precision": 0.9738805970149254,
+        "recall": 0.7733333333333333,
+        "f1-score": 0.8620974401321222,
+        "support": 675.0
+      },
+      "lateral": {
+        "precision": 0.8696808510638298,
+        "recall": 0.9746646795827124,
+        "f1-score": 0.9191848208011244,
+        "support": 671.0
+      },
+      "palm": {
+        "precision": 0.956140350877193,
+        "recall": 0.9761194029850746,
+        "f1-score": 0.96602658788774,
+        "support": 670.0
+      },
+      "rest": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "accuracy": 0.9077380952380952,
+      "macro avg": {
+        "precision": 0.6999254497389871,
+        "recall": 0.6810293539752801,
+        "f1-score": 0.6868272122052467,
+        "support": 2016.0
+      },
+      "weighted avg": {
+        "precision": 0.9333032188177697,
+        "recall": 0.9077380952380952,
+        "f1-score": 0.9156381948073029,
+        "support": 2016.0
+      }
+    },
+    "smoothed_report": {
+      "cylindrical": {
+        "precision": 0.9480286738351255,
+        "recall": 0.7837037037037037,
+        "f1-score": 0.8580697485806975,
+        "support": 675.0
+      },
+      "lateral": {
+        "precision": 0.8887343532684284,
+        "recall": 0.9523099850968704,
+        "f1-score": 0.9194244604316547,
+        "support": 671.0
+      },
+      "palm": {
+        "precision": 0.9585185185185185,
+        "recall": 0.9656716417910448,
+        "f1-score": 0.9620817843866171,
+        "support": 670.0
+      },
+      "rest": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "accuracy": 0.9002976190476191,
+      "macro avg": {
+        "precision": 0.6988203864055181,
+        "recall": 0.6754213326479047,
+        "f1-score": 0.6848939983497423,
+        "support": 2016.0
+      },
+      "weighted avg": {
+        "precision": 0.9317795204807701,
+        "recall": 0.9002976190476191,
+        "f1-score": 0.9130583773713514,
+        "support": 2016.0
+      }
+    },
+    "raw_cm": [
+      [
+        0.7733333333333333,
+        0.13925925925925925,
+        0.03851851851851852,
+        0.04888888888888889
+      ],
+      [
+        0.019374068554396422,
+        0.9746646795827124,
+        0.005961251862891207,
+        0.0
+      ],
+      [
+        0.0014925373134328358,
+        0.005970149253731343,
+        0.9761194029850746,
+        0.016417910447761194
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "smoothed_cm": [
+      [
+        0.7837037037037037,
+        0.11703703703703704,
+        0.035555555555555556,
+        0.0637037037037037
+      ],
+      [
+        0.041728763040238454,
+        0.9523099850968704,
+        0.005961251862891207,
+        0.0
+      ],
+      [
+        0.0014925373134328358,
+        0.0014925373134328358,
+        0.9656716417910448,
+        0.03134328358208955
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "n_predictions": 2016,
+    "mean_infer_ms": 0.7195199954049525,
+    "std_infer_ms": 0.43280101907897284
+  },
+  "transition_out": {
+    "raw_balanced_acc": 0.761712846347607,
+    "smoothed_balanced_acc": 0.6896725440806045,
+    "raw_report": {
+      "cylindrical": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "lateral": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "palm": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "rest": {
+        "precision": 1.0,
+        "recall": 0.761712846347607,
+        "f1-score": 0.8647412067486417,
+        "support": 1985.0
+      },
+      "accuracy": 0.761712846347607,
+      "macro avg": {
+        "precision": 0.25,
+        "recall": 0.19042821158690176,
+        "f1-score": 0.21618530168716044,
+        "support": 1985.0
+      },
+      "weighted avg": {
+        "precision": 1.0,
+        "recall": 0.761712846347607,
+        "f1-score": 0.8647412067486417,
+        "support": 1985.0
+      }
+    },
+    "smoothed_report": {
+      "cylindrical": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "lateral": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "palm": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 0.0
+      },
+      "rest": {
+        "precision": 1.0,
+        "recall": 0.6896725440806045,
+        "f1-score": 0.8163387000596303,
+        "support": 1985.0
+      },
+      "accuracy": 0.6896725440806045,
+      "macro avg": {
+        "precision": 0.25,
+        "recall": 0.17241813602015113,
+        "f1-score": 0.20408467501490757,
+        "support": 1985.0
+      },
+      "weighted avg": {
+        "precision": 1.0,
+        "recall": 0.6896725440806045,
+        "f1-score": 0.8163387000596303,
+        "support": 1985.0
+      }
+    },
+    "raw_cm": [
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.10730478589420656,
+        0.08816120906801007,
+        0.042821158690176324,
+        0.761712846347607
+      ]
+    ],
+    "smoothed_cm": [
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.12241813602015113,
+        0.13198992443324936,
+        0.05591939546599496,
+        0.6896725440806045
+      ]
+    ],
+    "n_predictions": 1985,
+    "mean_infer_ms": 0.6999000372372155,
+    "std_infer_ms": 0.3963295060265595
+  },
+  "hold_acc_per_group": {
+    "cylindrical": 0.971641791044776,
+    "lateral": 0.9990049751243781,
+    "palm": 1.0
+  },
+  "transition_in_acc_per_group": {
+    "cylindrical": 0.7732034273079049,
+    "lateral": 0.9746707564932231,
+    "palm": 0.9760650858573707
+  },
+  "transition_out_acc_per_group": {
+    "cylindrical": 0.6098541809068124,
+    "lateral": 0.7128730918204602,
+    "palm": 0.9621212121212122
+  },
+  "transition_out_rest_acc": 0.761712846347607,
+  "hold_acc_per_subclass": {
+    "cylindrical forward vertical": 0.9940298507462687,
+    "cylindrical forward horizontal": 1.0,
+    "cylindrical by side down": 1.0,
+    "cylindrical by side outstretched horizontal": 0.8686567164179104,
+    "cylindrical by side outstretched vertical": 1.0,
+    "lateral palm down": 1.0,
+    "lateral forward": 0.9970149253731343,
+    "lateral by side down": 1.0,
+    "lateral by side outstretched vertical": 0.9970149253731343,
+    "lateral by side outstretched horizontal": 1.0,
+    "palm forward": 1.0,
+    "palm by side outstretched": 1.0
+  },
+  "transition_in_acc_per_subclass": {
+    "cylindrical forward vertical": 0.8070175438596491,
+    "cylindrical forward horizontal": 0.7053571428571429,
+    "cylindrical by side down": 0.9459459459459459,
+    "cylindrical by side outstretched horizontal": 0.6756756756756757,
+    "cylindrical by side outstretched vertical": 0.8141592920353983,
+    "lateral palm down": 1.0,
+    "lateral forward": 1.0,
+    "lateral by side down": 0.9819819819819819,
+    "lateral by side outstretched vertical": 0.9642857142857143,
+    "lateral by side outstretched horizontal": 0.9469026548672567,
+    "palm forward": 0.9819819819819819,
+    "palm by side outstretched": 0.9911504424778761
+  },
+  "transition_out_acc_per_subclass": {
+    "cylindrical forward vertical": 0.7927927927927928,
+    "cylindrical forward horizontal": 0.6727272727272727,
+    "cylindrical by side down": 0.8018018018018018,
+    "cylindrical by side outstretched horizontal": 0.6909090909090909,
+    "cylindrical by side outstretched vertical": 0.3,
+    "lateral palm down": 0.7747747747747747,
+    "lateral forward": 0.7297297297297297,
+    "lateral by side down": 0.7363636363636363,
+    "lateral by side outstretched vertical": 0.6454545454545455,
+    "lateral by side outstretched horizontal": 0.6818181818181818,
+    "palm forward": 1.0,
+    "palm by side outstretched": 0.9272727272727272
+  },
+  "n_sample_trials": 5,
+  "mean_infer_ms": 0.6983688308024056,
+  "std_infer_ms": 0.3875493865041706,
+  "n_predictions": 10031,
+  "class_order": [
+    "cylindrical",
+    "lateral",
+    "palm",
+    "rest"
+  ]
+}

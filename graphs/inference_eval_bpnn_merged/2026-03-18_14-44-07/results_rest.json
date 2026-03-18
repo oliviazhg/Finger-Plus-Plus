@@ -1,0 +1,37 @@
+{
+  "rest_acc_raw": 1.0,
+  "rest_acc_smooth": 1.0,
+  "per_trial_acc": {
+    "1": 1.0,
+    "2": 1.0,
+    "3": 1.0,
+    "4": 1.0,
+    "5": 1.0,
+    "6": 1.0,
+    "7": 1.0,
+    "8": 1.0,
+    "9": 1.0
+  },
+  "pred_distribution": {
+    "cylindrical": 0,
+    "lateral": 0,
+    "palm": 0,
+    "rest": 603
+  },
+  "confusion_row": [
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "mean_infer_ms": 0.7013764510779437,
+  "std_infer_ms": 0.4116370214024287,
+  "n_predictions": 603,
+  "n_trials": 9,
+  "class_order": [
+    "cylindrical",
+    "lateral",
+    "palm",
+    "rest"
+  ]
+}
