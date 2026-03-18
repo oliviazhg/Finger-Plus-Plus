@@ -57,7 +57,7 @@ from pyomyo import Myo, emg_mode
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-RESULTS_DIR    = 'results_bpnn'
+RESULTS_DIR    = 'results_bpnn/2026-03-18_01-00-53_GOOD'
 
 # Model output classes — must match training
 CLASSES      = ['cylindrical', 'lateral', 'palm', 'rest']

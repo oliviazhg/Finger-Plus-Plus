@@ -40,7 +40,7 @@ from pyomyo import Myo, emg_mode
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-RESULTS_DIR      = 'results_bpnn'
+RESULTS_DIR      = 'results_bpnn/2026-03-18_01-00-53_GOOD'
 CLASSES          = ['cylindrical', 'lateral', 'palm', 'rest']
 WINDOW_SIZE      = 40        # 200ms at 200Hz
 STRIDE           = 20        # 50% overlap → predict every 100ms
