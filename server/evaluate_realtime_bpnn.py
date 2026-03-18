@@ -321,7 +321,9 @@ def record_phase(model, scaler, scale, true_idx, sub_class, duration, phase, tri
             continue
 
         samples_since_pred = 0
-        features = extract_features(np.array(buf))
+        window   = np.array(buf)
+        features = extract_features(window)
+        mav_max  = float(window.mean(axis=0).max())   # peak-channel MAV for onset detection
 
         t0 = time.monotonic()
         raw_pred, proba = infer(model, scaler, features)
@@ -341,6 +343,7 @@ def record_phase(model, scaler, scale, true_idx, sub_class, duration, phase, tri
                 'smoothed_pred': smoothed,
                 'proba':         proba.tolist(),
                 'infer_ms':      infer_ms,
+                'mav_max':       mav_max,
             })
 
     print()
@@ -775,7 +778,7 @@ def _write_csv(records, out_dir):
         w = csv.writer(f)
         w.writerow(['t', 'trial', 'phase', 'sub_class', 'true_group', 'raw_pred',
                     'smoothed_pred', 'conf_cyl', 'conf_lat', 'conf_palm', 'conf_rest',
-                    'infer_ms'])
+                    'infer_ms', 'mav_max'])
         for r in records:
             w.writerow([
                 f'{r["t"]:.4f}',
@@ -787,6 +790,7 @@ def _write_csv(records, out_dir):
                 CLASSES[r['smoothed_pred']],
                 *[f'{p:.4f}' for p in r['proba']],
                 f'{r["infer_ms"]:.2f}',
+                f'{r.get("mav_max", ""):.4f}' if r.get("mav_max") is not None else '',
             ])
     return csv_path
 
