@@ -371,19 +371,24 @@ def _acc_metrics(recs):
     y_raw      = np.array([r['raw_pred']      for r in recs])
     y_smoothed = np.array([r['smoothed_pred'] for r in recs])
     infer_ms   = np.array([r['infer_ms']      for r in recs])
+
+    # Get unique classes present in the data
+    unique_classes = np.unique(np.concatenate([y_true, y_raw, y_smoothed]))
+    target_names = [CLASSES[i] for i in unique_classes] if len(unique_classes) > 0 else CLASSES
+
     return {
         'raw_balanced_acc':      float(balanced_accuracy_score(y_true, y_raw)),
         'smoothed_balanced_acc': float(balanced_accuracy_score(y_true, y_smoothed)),
         'raw_report':      classification_report(y_true, y_raw,
-                               target_names=CLASSES, output_dict=True,
-                               zero_division=0),
+                               target_names=target_names, output_dict=True,
+                               zero_division=0, labels=unique_classes),
         'smoothed_report': classification_report(y_true, y_smoothed,
-                               target_names=CLASSES, output_dict=True,
-                               zero_division=0),
+                               target_names=target_names, output_dict=True,
+                               zero_division=0, labels=unique_classes),
         'raw_cm':      confusion_matrix(y_true, y_raw,
-                           labels=range(len(CLASSES)), normalize='true').tolist(),
+                           labels=unique_classes, normalize='true').tolist(),
         'smoothed_cm': confusion_matrix(y_true, y_smoothed,
-                           labels=range(len(CLASSES)), normalize='true').tolist(),
+                           labels=unique_classes, normalize='true').tolist(),
         'n_predictions':  len(recs),
         'mean_infer_ms':  float(infer_ms.mean()),
         'std_infer_ms':   float(infer_ms.std()),
