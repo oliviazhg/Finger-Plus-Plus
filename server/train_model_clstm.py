@@ -36,6 +36,7 @@ import os
 import copy
 import json
 import warnings
+from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -53,7 +54,7 @@ from sklearn.metrics import (balanced_accuracy_score, classification_report,
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 WINDOWED_DIR = 'data_windowed'
-RESULTS_DIR  = 'results_clstm'
+RESULTS_DIR  = f'results_clstm/{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}'
 
 CLASS_GROUPS = {
     'cylindrical forward': 'cylindrical',

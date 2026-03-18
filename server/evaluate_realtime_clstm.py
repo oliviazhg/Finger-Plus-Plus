@@ -745,17 +745,32 @@ def main():
                         help='Hold duration in seconds (static mode)')
     parser.add_argument('--rest', type=int, default=REST_GAP_SEC,
                         help='Rest gap between trials/sweeps in seconds')
+    parser.add_argument('--results', default=None,
+                        help='Path to training results folder containing model.pt '
+                             '(default: latest timestamped run under results_clstm/)')
     args = parser.parse_args()
+
+    if args.results:
+        results_dir = args.results
+    else:
+        base = RESULTS_DIR  # 'results_clstm'
+        if os.path.isdir(base):
+            runs = sorted(d for d in os.listdir(base)
+                          if os.path.isdir(os.path.join(base, d)))
+            results_dir = os.path.join(base, runs[-1]) if runs else base
+        else:
+            results_dir = base
+    print(f'Results dir : {results_dir}')
 
     print(f'Device : {DEVICE}')
     print('Loading model...')
-    with open(os.path.join(RESULTS_DIR, 'results.json')) as f:
+    with open(os.path.join(results_dir, 'results.json')) as f:
         meta = json.load(f)
     dropout = meta.get('best_config', {}).get('dropout', 0.0)
 
     model = CLSTM(dropout=dropout).to(DEVICE)
     model.load_state_dict(
-        torch.load(os.path.join(RESULTS_DIR, 'model.pt'), map_location=DEVICE)
+        torch.load(os.path.join(results_dir, 'model.pt'), map_location=DEVICE)
     )
     model.eval()
     print(f'  Architecture : {meta.get("architecture")}')

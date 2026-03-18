@@ -879,20 +879,35 @@ def main():
                         help='Hold duration in seconds (static mode)')
     parser.add_argument('--rest', type=int, default=REST_GAP_SEC,
                         help='Rest gap between trials/sweeps in seconds')
+    parser.add_argument('--results', default=None,
+                        help='Path to training results folder containing model.pt '
+                             '(default: latest timestamped run under results_bpnn/)')
     args = parser.parse_args()
+
+    if args.results:
+        results_dir = args.results
+    else:
+        base = RESULTS_DIR  # 'results_bpnn'
+        if os.path.isdir(base):
+            runs = sorted(d for d in os.listdir(base)
+                          if os.path.isdir(os.path.join(base, d)))
+            results_dir = os.path.join(base, runs[-1]) if runs else base
+        else:
+            results_dir = base
+    print(f'Results dir : {results_dir}')
 
     print(f'Device : {DEVICE}')
     print('Loading model and scaler...')
-    with open(os.path.join(RESULTS_DIR, 'results.json')) as f:
+    with open(os.path.join(results_dir, 'results.json')) as f:
         meta = json.load(f)
     dropout = meta.get('best_config', {}).get('dropout', 0.0)
 
     model = BPNN(dropout=dropout).to(DEVICE)
     model.load_state_dict(
-        torch.load(os.path.join(RESULTS_DIR, 'model.pt'), map_location=DEVICE)
+        torch.load(os.path.join(results_dir, 'model.pt'), map_location=DEVICE)
     )
     model.eval()
-    scaler = joblib.load(os.path.join(RESULTS_DIR, 'scaler.joblib'))
+    scaler = joblib.load(os.path.join(results_dir, 'scaler.joblib'))
     print(f'  Architecture : {meta.get("architecture", "48→128→4")}')
     print(f'  Config       : {meta.get("best_config")}')
 
