@@ -25,14 +25,32 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 # ── Mock hardware so evaluate_realtime_bpnn can be imported offline ────────────
-for _mod in ('pyomyo', 'torch', 'torch.nn'):
-    if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
-sys.modules['pyomyo'].Myo      = MagicMock()
-sys.modules['pyomyo'].emg_mode = MagicMock()
-sys.modules['torch'].device    = MagicMock(return_value='cpu')
-sys.modules['torch'].no_grad   = MagicMock()
-sys.modules['torch.nn'].Module = object
+# Only mock modules that aren't actually installed. Mocking torch when scipy is
+# present breaks scipy's is_torch_array check (issubclass against a MagicMock).
+
+if 'pyomyo' not in sys.modules:
+    try:
+        import pyomyo  # noqa: F401
+    except ImportError:
+        _pyomyo_mock = MagicMock()
+        _pyomyo_mock.Myo      = MagicMock()
+        _pyomyo_mock.emg_mode = MagicMock()
+        sys.modules['pyomyo'] = _pyomyo_mock
+
+if 'torch' not in sys.modules:
+    try:
+        import torch  # noqa: F401
+        import torch.nn  # noqa: F401
+    except ImportError:
+        # Provide a real class for Tensor so scipy's issubclass check doesn't crash
+        class _FakeTensor:
+            pass
+        _torch_mock = MagicMock()
+        _torch_mock.Tensor   = _FakeTensor
+        _torch_mock.device   = MagicMock(return_value='cpu')
+        _torch_mock.no_grad  = MagicMock()
+        sys.modules['torch']    = _torch_mock
+        sys.modules['torch.nn'] = MagicMock()
 
 # Add server/ to path so the import works regardless of cwd
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
