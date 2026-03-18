@@ -139,6 +139,27 @@ def load_records(csv_path):
     return records
 
 
+def load_amp_samples(session_dir):
+    '''Load emg_amplitude.csv if present. Returns list of dicts or None.'''
+    path = os.path.join(session_dir, 'emg_amplitude.csv')
+    if not os.path.exists(path):
+        return None
+    samples = []
+    with open(path, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            t    = _safe_float(row.get('t'),    None)
+            peak = _safe_float(row.get('peak'), None)
+            if t is None or peak is None:
+                continue
+            samples.append({
+                'trial': int(_safe_float(row.get('trial', 0))),
+                'phase': row.get('phase', ''),
+                't':     t,
+                'peak':  peak,
+            })
+    return samples or None
+
+
 def _merge_rest_records(gesture_records, rest_records):
     trial_offset = (max(r['trial'] for r in gesture_records) + 1
                     if gesture_records else 0)
@@ -179,7 +200,7 @@ def plot_confusion(y_true, y_pred, title, path):
 
 # ── Per-class metrics ─────────────────────────────────────────────────────────
 
-def plot_per_class_metrics(y_true, y_pred, path):
+def plot_per_class_metrics(y_true, y_pred, path, title_suffix='hold phase'):
     '''Grouped bar chart: precision / recall / F1 for each of the 4 classes.'''
     report = classification_report(
         y_true, y_pred,
@@ -206,7 +227,7 @@ def plot_per_class_metrics(y_true, y_pred, path):
     ax.set_xticklabels(CLASSES)
     ax.set_ylabel('Score')
     ax.set_ylim(0, 1.18)
-    ax.set_title(f'Per-class metrics — hold phase, all 4 classes\n'
+    ax.set_title(f'Per-class metrics — {title_suffix}, all 4 classes\n'
                  f'balanced accuracy = {bal_acc:.3f}')
     ax.axhline(0.25, color='gray', linestyle=':', alpha=0.5, label='chance (1/4)')
     ax.legend()
@@ -218,13 +239,26 @@ def plot_per_class_metrics(y_true, y_pred, path):
 
 # ── Latency / stability helpers ───────────────────────────────────────────────
 
-def _baseline_mav(gesture_records, n_trials=5):
-    '''Estimate MAV baseline (mean + 3*std) from the first N rest-phase records.
+AMP_SMOOTH_SAMPLES = 5   # rolling window for per-sample onset smoothing (~25 ms @ 200 Hz)
 
-    Uses transition_out records (hand returning to rest) as a proxy for
-    baseline activity when no dedicated rest MAV data is available.
-    Falls back to a fixed default if insufficient data.
+
+def _baseline_from_amp(amp_samples, n_samples=None):
+    '''Estimate onset threshold (mean + 3*std) from transition_out amp samples.
+
+    transition_out (hand returning to rest after a gesture) is used as a
+    baseline proxy. Returns threshold float or None if insufficient data.
     '''
+    rest_peaks = [s['peak'] for s in amp_samples if s['phase'] == 'transition_out']
+    if n_samples:
+        rest_peaks = rest_peaks[:n_samples]
+    if len(rest_peaks) < 10:
+        return None
+    arr = np.array(rest_peaks)
+    return float(arr.mean() + 3 * arr.std())
+
+
+def _baseline_mav(gesture_records, n_trials=5):
+    '''Fallback: estimate threshold from prediction-stride MAV values (100 ms resolution).'''
     rest_mavs = [r['mav_max'] for r in gesture_records
                  if r['phase'] == 'transition_out'
                  and r['mav_max'] is not None][:n_trials * 20]
@@ -234,26 +268,36 @@ def _baseline_mav(gesture_records, n_trials=5):
     return float(arr.mean() + 3 * arr.std())
 
 
+def _detect_onset_from_amp(trial_amp_in, threshold):
+    '''High-resolution onset from per-sample amp data (~5 ms resolution).
+
+    Applies a short rolling mean (AMP_SMOOTH_SAMPLES) then finds the first
+    sample exceeding the threshold. Returns onset time (float seconds) or None.
+    '''
+    if not trial_amp_in:
+        return None
+    peaks = np.array([s['peak'] for s in trial_amp_in])
+    # Rolling mean to suppress single-sample noise
+    kernel = np.ones(AMP_SMOOTH_SAMPLES) / AMP_SMOOTH_SAMPLES
+    smoothed = np.convolve(peaks, kernel, mode='same')
+    for i, v in enumerate(smoothed):
+        if v > threshold:
+            return trial_amp_in[i]['t']
+    return None
+
+
 def _detect_onset(tr_in_recs, true_idx, mav_threshold=None):
-    '''Detect EMG onset in a transition_in sequence.
+    '''Prediction-stride onset fallback (100 ms resolution).
 
-    If mav_max is present in records and mav_threshold is provided, uses a
-    3-SD threshold on peak-channel MAV — the standard signal-based method.
-
-    Falls back to confidence proxy (conf[correct] > conf[rest]) for older
-    CSVs without the mav_max column.
-
-    Returns record index or None.
+    Used when emg_amplitude.csv is not available. Uses mav_max from prediction
+    records if present, otherwise falls back to confidence proxy.
     '''
     has_mav = any(r['mav_max'] is not None for r in tr_in_recs)
-
     if has_mav and mav_threshold is not None:
-        # Signal-based onset: MAV crosses baseline + 3*std threshold
         for i, r in enumerate(tr_in_recs):
             if r['mav_max'] is not None and r['mav_max'] > mav_threshold:
                 return i
     else:
-        # Confidence proxy fallback (biased late — see docstring in module)
         for i, r in enumerate(tr_in_recs):
             if r['proba'][true_idx] > r['proba'][REST_IDX]:
                 return i
@@ -271,23 +315,35 @@ def _detect_stable(ordered_recs, true_idx):
     return None
 
 
-def compute_latency_and_stability(gesture_records):
+def compute_latency_and_stability(gesture_records, amp_samples=None):
     '''For each gesture trial:
-      - onset_t       : EMG onset (MAV threshold if available, else confidence proxy)
-      - stable_t      : first sample where STABLE_N consecutive smoothed preds are correct
-      - latency       : stable_t - onset_t  (model response after EMG onset)
-      - time_to_stable: stable_t - trial_start_t  (total time from trial start)
+      - onset_t       : EMG onset time, detected at ~5 ms resolution from emg_amplitude.csv
+                        when available, else falls back to prediction-stride MAV (100 ms)
+                        or confidence proxy.
+      - stable_t      : first prediction time where STABLE_N consecutive smoothed preds correct
+      - latency       : stable_t - onset_t
+      - time_to_stable: stable_t - trial_start_t
       - hold_stability: fraction of hold-phase smoothed predictions that are correct
     '''
-    mav_threshold  = _baseline_mav(gesture_records)
-    onset_method   = 'mav_threshold' if mav_threshold is not None else 'confidence_proxy'
-    trial_groups   = _group_by_trial(gesture_records)
-    latencies      = []
+    # Build per-trial amp lookup grouped by (trial, phase) if amp data available
+    amp_by_trial_phase = defaultdict(list)
+    if amp_samples:
+        for s in amp_samples:
+            amp_by_trial_phase[(s['trial'], s['phase'])].append(s)
+        amp_threshold  = _baseline_from_amp(amp_samples)
+        onset_method   = 'amp_5ms' if amp_threshold is not None else 'confidence_proxy'
+    else:
+        amp_threshold  = None
+        mav_threshold  = _baseline_mav(gesture_records)
+        onset_method   = 'mav_100ms' if mav_threshold is not None else 'confidence_proxy'
+
+    trial_groups    = _group_by_trial(gesture_records)
+    latencies       = []
     times_to_stable = []
-    stabilities    = []
-    n_no_onset     = 0
-    n_no_stable    = 0
-    example_trial  = None   # first trial with detected onset, for plotting
+    stabilities     = []
+    n_no_onset      = 0
+    n_no_stable     = 0
+    example_trial   = None
 
     for trial_num in sorted(trial_groups):
         recs     = trial_groups[trial_num]
@@ -302,16 +358,24 @@ def compute_latency_and_stability(gesture_records):
             n_no_onset += 1
             continue
 
-        onset_i = _detect_onset(tr_in, true_idx, mav_threshold)
-        if onset_i is None:
+        trial_start_t = recs[0]['t']
+
+        # --- Onset detection ---
+        if amp_samples and amp_threshold is not None:
+            tr_in_amp = amp_by_trial_phase.get((trial_num, 'transition_in'), [])
+            onset_t   = _detect_onset_from_amp(tr_in_amp, amp_threshold)
+            onset_i   = None   # not used for amp-based onset
+        else:
+            thresh    = mav_threshold if not amp_samples else None
+            onset_i   = _detect_onset(tr_in, true_idx, thresh)
+            onset_t   = tr_in[onset_i]['t'] if onset_i is not None else None
+
+        if onset_t is None:
             n_no_onset += 1
             continue
 
-        onset_t       = tr_in[onset_i]['t']
-        trial_start_t = recs[0]['t']
-
-        # Stable detection over transition_in + hold
-        active = tr_in + hold
+        # --- Stable detection (prediction-stride resolution) ---
+        active   = tr_in + hold
         stable_i = _detect_stable(active, true_idx)
         if stable_i is None:
             n_no_stable += 1
@@ -319,7 +383,7 @@ def compute_latency_and_stability(gesture_records):
             stable_t = active[stable_i]['t']
             lat = stable_t - onset_t
             tts = stable_t - trial_start_t
-            if lat >= 0:   # guard against clock jitter
+            if lat >= 0:
                 latencies.append(lat)
                 times_to_stable.append(tts)
 
@@ -329,9 +393,11 @@ def compute_latency_and_stability(gesture_records):
             stabilities.append(correct / len(hold))
 
         if example_trial is None:
-            example_trial = (trial_num, recs, true_idx, onset_i,
+            example_trial = (trial_num, recs, true_idx,
+                             onset_i if onset_i is not None else 0,
                              None if stable_i is None else active[stable_i]['t'])
 
+    threshold_val = amp_threshold if amp_samples else (mav_threshold if not amp_samples else None)
     return {
         'latencies':       latencies,
         'times_to_stable': times_to_stable,
@@ -340,74 +406,112 @@ def compute_latency_and_stability(gesture_records):
         'n_no_stable':     n_no_stable,
         'example_trial':   example_trial,
         'onset_method':    onset_method,
-        'mav_threshold':   mav_threshold,
+        'mav_threshold':   threshold_val,
     }
 
 
 # ── Latency / stability plots ─────────────────────────────────────────────────
 
+LATENCY_OUTLIER_MS = 800   # trials above this are excluded from the plot (noted in title)
+
+
 def plot_latency_distribution(data, path):
-    lats = np.array(data['latencies']) * 1000   # convert to ms
+    lats_all   = np.array(data['latencies']) * 1000   # convert to ms
+    lats       = lats_all[lats_all <= LATENCY_OUTLIER_MS]
+    n_excluded = int((lats_all > LATENCY_OUTLIER_MS).sum())
     if len(lats) == 0:
         print('  Skipped latency plot (no valid trials)')
         return
-    mean_l = lats.mean()
-    std_l  = lats.std()
-    worst  = lats.max()
+    mean_l = lats_all.mean()   # stats computed on full distribution
+    std_l  = lats_all.std()
+    worst  = lats_all.max()
 
     method = data.get('onset_method', 'confidence_proxy')
-    if method == 'mav_threshold':
-        onset_label = f'MAV threshold (baseline + 3σ = {data["mav_threshold"]:.3f})'
+    if method == 'amp_5ms':
+        onset_label = f'per-sample peak amplitude, 25 ms smoothing, threshold={data["mav_threshold"]:.3f}'
+    elif method == 'mav_100ms':
+        onset_label = f'prediction-stride MAV (100 ms res.), threshold={data["mav_threshold"]:.3f}'
     else:
-        onset_label = 'confidence proxy: conf[correct] > conf[rest]  (no mav_max in CSV)'
+        onset_label = 'confidence proxy: conf[correct] > conf[rest]  (no amplitude data)'
 
+    def _latency_plot(ax, arr, title_suffix):
+        m, s, w = arr.mean(), arr.std(), arr.max()
+        ax.hist(arr, bins=20, color='steelblue', alpha=0.8, edgecolor='white')
+        ax.axvline(m, color='tomato',   linestyle='--', linewidth=1.5,
+                   label=f'mean = {m:.0f} ms')
+        ax.axvline(w, color='firebrick', linestyle=':',  linewidth=1.5,
+                   label=f'worst = {w:.0f} ms')
+        ax.set_xlabel('Latency (ms)')
+        ax.set_ylabel('Trial count')
+        ax.set_title(
+            f'Onset-to-detection latency{title_suffix}  '
+            f'(mean={m:.0f} ms, std={s:.0f} ms, worst={w:.0f} ms)\n'
+            f'Onset: {onset_label}  |  n={len(arr)} trials  '
+            f'({data["n_no_onset"]} no onset, {data["n_no_stable"]} no stable detection)')
+        ax.legend()
+
+    # Full distribution
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.hist(lats, bins=20, color='steelblue', alpha=0.8, edgecolor='white')
-    ax.axvline(mean_l, color='tomato',   linestyle='--', linewidth=1.5,
-               label=f'mean = {mean_l:.0f} ms')
-    ax.axvline(worst,  color='firebrick', linestyle=':',  linewidth=1.5,
-               label=f'worst = {worst:.0f} ms')
-    ax.set_xlabel('Latency (ms)')
-    ax.set_ylabel('Trial count')
-    ax.set_title(
-        f'Onset-to-detection latency  '
-        f'(mean={mean_l:.0f} ms, std={std_l:.0f} ms, worst={worst:.0f} ms)\n'
-        f'Onset: {onset_label}  |  '
-        f'n={len(lats)} trials  '
-        f'({data["n_no_onset"]} no onset, {data["n_no_stable"]} no stable detection)')
-    ax.legend()
+    _latency_plot(ax, lats_all, '')
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close()
     print(f'  Saved {path}')
+
+    # Outliers removed
+    if n_excluded > 0:
+        path_filt = path.replace('.png', '_no_outliers.png')
+        fig, ax = plt.subplots(figsize=(9, 4))
+        _latency_plot(ax, lats, f' (>{LATENCY_OUTLIER_MS} ms excluded, n={n_excluded})')
+        plt.tight_layout()
+        plt.savefig(path_filt, dpi=150)
+        plt.close()
+        print(f'  Saved {path_filt}')
+
+
+TTS_OUTLIER_MS = 1000   # trials above this are excluded from the filtered plot
 
 
 def plot_time_to_stable(data, path):
-    tts = np.array(data['times_to_stable']) * 1000   # ms
-    if len(tts) == 0:
+    tts_all    = np.array(data['times_to_stable']) * 1000   # ms
+    tts        = tts_all[tts_all <= TTS_OUTLIER_MS]
+    n_excluded = int((tts_all > TTS_OUTLIER_MS).sum())
+    if len(tts_all) == 0:
         print('  Skipped time-to-stable plot (no valid trials)')
         return
-    mean_t = tts.mean()
-    std_t  = tts.std()
-    worst  = tts.max()
 
+    def _tts_plot(ax, arr, title_suffix):
+        m, s, w = arr.mean(), arr.std(), arr.max()
+        ax.hist(arr, bins=20, color='seagreen', alpha=0.8, edgecolor='white')
+        ax.axvline(m, color='tomato',   linestyle='--', linewidth=1.5,
+                   label=f'mean = {m:.0f} ms')
+        ax.axvline(w, color='firebrick', linestyle=':',  linewidth=1.5,
+                   label=f'worst = {w:.0f} ms')
+        ax.set_xlabel('Time from trial start (ms)')
+        ax.set_ylabel('Trial count')
+        ax.set_title(
+            f'Time to stable prediction from trial start{title_suffix}\n'
+            f'mean={m:.0f} ms, std={s:.0f} ms, worst={w:.0f} ms  '
+            f'(stable = {STABLE_N} consecutive correct smoothed predictions)')
+        ax.legend()
+
+    # Full distribution
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.hist(tts, bins=20, color='seagreen', alpha=0.8, edgecolor='white')
-    ax.axvline(mean_t, color='tomato',   linestyle='--', linewidth=1.5,
-               label=f'mean = {mean_t:.0f} ms')
-    ax.axvline(worst,  color='firebrick', linestyle=':',  linewidth=1.5,
-               label=f'worst = {worst:.0f} ms')
-    ax.set_xlabel('Time from trial start (ms)')
-    ax.set_ylabel('Trial count')
-    ax.set_title(
-        f'Time to stable prediction from trial start\n'
-        f'mean={mean_t:.0f} ms, std={std_t:.0f} ms, worst={worst:.0f} ms  '
-        f'(stable = {STABLE_N} consecutive correct smoothed predictions)')
-    ax.legend()
+    _tts_plot(ax, tts_all, '')
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close()
     print(f'  Saved {path}')
+
+    # Outliers removed
+    if n_excluded > 0 and len(tts) > 0:
+        path_filt = path.replace('.png', '_no_outliers.png')
+        fig, ax = plt.subplots(figsize=(9, 4))
+        _tts_plot(ax, tts, f' (>{TTS_OUTLIER_MS} ms excluded, n={n_excluded})')
+        plt.tight_layout()
+        plt.savefig(path_filt, dpi=150)
+        plt.close()
+        print(f'  Saved {path_filt}')
 
 
 def plot_stability_distribution(data, path):
@@ -439,11 +543,12 @@ def plot_stability_distribution(data, path):
 
 # ── Trial confidence plot ─────────────────────────────────────────────────────
 
-def plot_trial_confidence(gesture_records, trial_num, path):
+def plot_trial_confidence(gesture_records, trial_num, path, amp_samples=None):
     '''Plot model confidence traces over a single trial with onset and stable markers.
 
-    Since raw EMG is not stored in predictions.csv, confidence traces serve as
-    the model's view of the signal — they track EMG onset and decay closely.
+    If amp_samples (from emg_amplitude.csv) are available, the top panel shows
+    the per-sample amplitude trace at 5 ms resolution with the onset threshold.
+    Otherwise falls back to prediction-stride MAV or confidence proxy.
     '''
     trial_groups = _group_by_trial(gesture_records)
 
@@ -467,11 +572,21 @@ def plot_trial_confidence(gesture_records, trial_num, path):
     hold   = [r for r in recs if r['phase'] == 'hold']
     active = tr_in + hold
 
-    onset_i  = _detect_onset(tr_in, true_idx) if tr_in else None
     stable_i = _detect_stable(active, true_idx) if active else None
-
-    onset_t  = (tr_in[onset_i]['t']  - t0) if onset_i  is not None else None
     stable_t = (active[stable_i]['t'] - t0) if stable_i is not None else None
+
+    # Onset detection — prefer per-sample amp data when available
+    if amp_samples:
+        amp_threshold = _baseline_from_amp(amp_samples)
+        tr_in_amp     = [s for s in amp_samples
+                         if s['trial'] == trial_num and s['phase'] == 'transition_in']
+        raw_onset_t   = _detect_onset_from_amp(tr_in_amp, amp_threshold) if amp_threshold else None
+        onset_t       = (raw_onset_t - t0) if raw_onset_t is not None else None
+    else:
+        mav_threshold = _baseline_mav(gesture_records)
+        onset_i       = _detect_onset(tr_in, true_idx, mav_threshold) if tr_in else None
+        onset_t       = (tr_in[onset_i]['t'] - t0) if onset_i is not None else None
+        amp_threshold = mav_threshold
 
     # Phase boundary times
     phase_seq = [r['phase'] for r in recs]
@@ -481,16 +596,31 @@ def plot_trial_confidence(gesture_records, trial_num, path):
         if indices:
             phase_boundaries[phase] = (t_rel[indices[0]], t_rel[indices[-1]])
 
-    has_mav = any(r['mav_max'] is not None for r in recs)
-    mav_threshold = _baseline_mav(gesture_records)
+    has_mav     = any(r['mav_max'] is not None for r in recs)
+    mav_threshold = amp_threshold if amp_samples else _baseline_mav(gesture_records)
 
-    if has_mav:
+    show_amp_panel = amp_samples or has_mav
+    if show_amp_panel:
         fig, (ax_mav, ax) = plt.subplots(2, 1, figsize=(12, 7), sharex=True,
                                           gridspec_kw={'height_ratios': [1, 2]})
-        # MAV trace (top panel)
-        mavs = [r['mav_max'] if r['mav_max'] is not None else 0.0 for r in recs]
-        ax_mav.plot(t_rel, mavs, color='saddlebrown', linewidth=1.2, alpha=0.85,
-                    label='MAV (peak channel, normalised)')
+        # Top panel: per-sample amplitude trace (preferred) or prediction-stride MAV
+        if amp_samples:
+            trial_amp = [s for s in amp_samples if s['trial'] == trial_num]
+            amp_t     = np.array([s['t'] - t0 for s in trial_amp])
+            amp_vals  = np.array([s['peak']    for s in trial_amp])
+            # smoothed for display
+            kernel    = np.ones(AMP_SMOOTH_SAMPLES) / AMP_SMOOTH_SAMPLES
+            amp_smooth = np.convolve(amp_vals, kernel, mode='same')
+            ax_mav.plot(amp_t, amp_vals,   color='saddlebrown', linewidth=0.6,
+                        alpha=0.4, label='peak amplitude (raw)')
+            ax_mav.plot(amp_t, amp_smooth, color='saddlebrown', linewidth=1.4,
+                        alpha=0.9, label=f'smoothed ({AMP_SMOOTH_SAMPLES}-sample window)')
+            amp_label = 'amplitude (norm.)'
+        else:
+            mavs = [r['mav_max'] if r['mav_max'] is not None else 0.0 for r in recs]
+            ax_mav.plot(t_rel, mavs, color='saddlebrown', linewidth=1.2, alpha=0.85,
+                        label='MAV (prediction-stride, 100 ms res.)')
+            amp_label = 'MAV (norm.)'
         if mav_threshold is not None:
             ax_mav.axhline(mav_threshold, color='black', linestyle='--', linewidth=1.0,
                            label=f'onset threshold ({mav_threshold:.3f})')
@@ -499,7 +629,7 @@ def plot_trial_confidence(gesture_records, trial_num, path):
         for phase, (t_start, t_end) in phase_boundaries.items():
             ax_mav.axvspan(t_start, t_end, alpha=0.08,
                            color=PHASE_COLORS.get(phase, 'white'))
-        ax_mav.set_ylabel('MAV (norm.)')
+        ax_mav.set_ylabel(amp_label)
         ax_mav.legend(fontsize=8)
     else:
         fig, ax = plt.subplots(figsize=(12, 5))
@@ -519,8 +649,12 @@ def plot_trial_confidence(gesture_records, trial_num, path):
                 alpha=alpha, label=cls)
 
     # Onset marker
-    onset_label = ('MAV threshold' if (has_mav and mav_threshold is not None)
-                   else f'conf[{cls_name}] > conf[rest]')
+    if amp_samples:
+        onset_label = 'per-sample amplitude (5 ms res.)'
+    elif has_mav and mav_threshold is not None:
+        onset_label = 'prediction-stride MAV (100 ms res.)'
+    else:
+        onset_label = f'conf[{cls_name}] > conf[rest]'
     if onset_t is not None:
         ax.axvline(onset_t, color='black', linestyle='-', linewidth=1.5,
                    label=f'onset ({onset_label})')
@@ -579,16 +713,30 @@ def compute_unified_metrics(hold_recs, gesture_records, all_phase_recs, infer_ms
     fa_raw    = int((y_raw[rest_mask]    != REST_IDX).sum()) if rest_mask.any() else 0
     fa_smooth = int((y_smooth[rest_mask] != REST_IDX).sum()) if rest_mask.any() else 0
 
-    # Cross-gesture confusions during transitions
+    # Cross-gesture confusions during transitions — total and per-class
+    GESTURE_IDXS = [i for i, c in enumerate(CLASSES) if i != REST_IDX]
+
     def _cross_gesture(recs, phase, pred_key):
         pr = [r for r in recs if r['phase'] == phase and r['true'] != REST_IDX]
-        return (sum(1 for r in pr if r[pred_key] != r['true'] and r[pred_key] != REST_IDX),
-                len(pr))
+        total_cross = sum(1 for r in pr
+                          if r[pred_key] != r['true'] and r[pred_key] != REST_IDX)
+        # Per-class breakdown: for each gesture class, count correct / wrong gesture / rest
+        per_class = {}
+        for cls_i in GESTURE_IDXS:
+            cls_recs = [r for r in pr if r['true'] == cls_i]
+            per_class[CLASSES[cls_i]] = {
+                'correct':       sum(1 for r in cls_recs if r[pred_key] == cls_i),
+                'wrong_gesture': sum(1 for r in cls_recs
+                                     if r[pred_key] != cls_i and r[pred_key] != REST_IDX),
+                'predicted_rest': sum(1 for r in cls_recs if r[pred_key] == REST_IDX),
+                'total':         len(cls_recs),
+            }
+        return total_cross, len(pr), per_class
 
-    cg_in_raw,     n_tr_in  = _cross_gesture(gesture_records, 'transition_in',  'raw_pred')
-    cg_in_smooth,  _        = _cross_gesture(gesture_records, 'transition_in',  'smoothed_pred')
-    cg_out_raw,    n_tr_out = _cross_gesture(gesture_records, 'transition_out', 'raw_pred')
-    cg_out_smooth, _        = _cross_gesture(gesture_records, 'transition_out', 'smoothed_pred')
+    cg_in_raw,     n_tr_in,  cg_in_raw_per_cls  = _cross_gesture(gesture_records, 'transition_in',  'raw_pred')
+    cg_in_smooth,  _,        cg_in_sm_per_cls   = _cross_gesture(gesture_records, 'transition_in',  'smoothed_pred')
+    cg_out_raw,    n_tr_out, cg_out_raw_per_cls  = _cross_gesture(gesture_records, 'transition_out', 'raw_pred')
+    cg_out_smooth, _,        cg_out_sm_per_cls   = _cross_gesture(gesture_records, 'transition_out', 'smoothed_pred')
 
     return {
         'balanced_acc_raw':              float(balanced_accuracy_score(y_true, y_raw)),
@@ -596,12 +744,16 @@ def compute_unified_metrics(hold_recs, gesture_records, all_phase_recs, infer_ms
         'false_activation_raw':          fa_raw,
         'false_activation_smooth':       fa_smooth,
         'n_rest_hold_predictions':       n_rest,
-        'cross_gesture_transition_in_raw':     cg_in_raw,
-        'cross_gesture_transition_in_smooth':  cg_in_smooth,
-        'n_transition_in_predictions':         n_tr_in,
-        'cross_gesture_transition_out_raw':    cg_out_raw,
-        'cross_gesture_transition_out_smooth': cg_out_smooth,
-        'n_transition_out_predictions':        n_tr_out,
+        'cross_gesture_transition_in_raw':          cg_in_raw,
+        'cross_gesture_transition_in_smooth':       cg_in_smooth,
+        'cross_gesture_transition_in_raw_per_cls':  cg_in_raw_per_cls,
+        'cross_gesture_transition_in_sm_per_cls':   cg_in_sm_per_cls,
+        'n_transition_in_predictions':              n_tr_in,
+        'cross_gesture_transition_out_raw':         cg_out_raw,
+        'cross_gesture_transition_out_smooth':      cg_out_smooth,
+        'cross_gesture_transition_out_raw_per_cls': cg_out_raw_per_cls,
+        'cross_gesture_transition_out_sm_per_cls':  cg_out_sm_per_cls,
+        'n_transition_out_predictions':             n_tr_out,
         'per_class_raw':                 report_raw,
         'per_class_smoothed':            report_smooth,
         'confusion_hold_raw':            cm_hold_raw,
@@ -614,6 +766,78 @@ def compute_unified_metrics(hold_recs, gesture_records, all_phase_recs, infer_ms
         'std_infer_ms':                  float(infer_ms_all.std()),
         'class_order':                   CLASSES,
     }
+
+
+def plot_transition_confusion(metrics, path, smoothed=False):
+    '''Stacked bar chart of prediction outcomes during transition phases.
+
+    For each gesture class, shows two grouped bars (tr-in / tr-out).
+    Each bar is stacked: correct | predicted rest | wrong gesture.
+    Uses raw predictions by default; pass smoothed=True for smoothed.
+    '''
+    suffix   = 'sm_per_cls' if smoothed else 'raw_per_cls'
+    in_data  = metrics.get(f'cross_gesture_transition_in_{suffix}',  {})
+    out_data = metrics.get(f'cross_gesture_transition_out_{suffix}', {})
+
+    gesture_classes = [c for c in CLASSES if c != CLASSES[REST_IDX]]
+    if not in_data and not out_data:
+        print('  Skipped transition confusion plot (no data)')
+        return
+
+    n   = len(gesture_classes)
+    x   = np.arange(n)
+    w   = 0.35
+
+    colors = {
+        'correct':        'seagreen',
+        'predicted_rest': 'steelblue',
+        'wrong_gesture':  'tomato',
+    }
+    labels = {
+        'correct':        'Correct',
+        'predicted_rest': 'Predicted rest',
+        'wrong_gesture':  'Wrong gesture',
+    }
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    for bar_i, (phase_label, offset, data) in enumerate([
+        ('tr-in',  -w / 2, in_data),
+        ('tr-out',  w / 2, out_data),
+    ]):
+        bottoms = np.zeros(n)
+        for stack_key in ('correct', 'predicted_rest', 'wrong_gesture'):
+            vals = np.array([data.get(cls, {}).get(stack_key, 0)
+                             for cls in gesture_classes], dtype=float)
+            bars = ax.bar(x + offset, vals, w, bottom=bottoms,
+                          color=colors[stack_key], alpha=0.85,
+                          label=labels[stack_key] if bar_i == 0 else '_nolegend_')
+            # Label non-zero segments
+            for xi, (val, bot) in enumerate(zip(vals, bottoms)):
+                if val > 0:
+                    ax.text(xi + offset, bot + val / 2, str(int(val)),
+                            ha='center', va='center', fontsize=8, color='white',
+                            fontweight='bold')
+            bottoms += vals
+
+        # Phase label above bar group
+        totals = np.array([data.get(cls, {}).get('total', 0)
+                           for cls in gesture_classes], dtype=float)
+        for xi, tot in enumerate(totals):
+            ax.text(xi + offset, tot + 0.5, phase_label,
+                    ha='center', va='bottom', fontsize=7.5, color='dimgray')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(gesture_classes)
+    ax.set_ylabel('Prediction count')
+    pred_type = 'smoothed' if smoothed else 'raw'
+    ax.set_title(f'Transition phase prediction breakdown ({pred_type})\n'
+                 f'Wrong gesture = cross-class confusion (excluding rest)')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -648,6 +872,13 @@ def main():
     print(f'Loading static session: {static_csv}')
     gesture_records = load_records(static_csv)
     print(f'  {len(gesture_records)} predictions loaded')
+
+    static_dir  = os.path.dirname(static_csv)
+    amp_samples = load_amp_samples(static_dir)
+    if amp_samples:
+        print(f'  {len(amp_samples)} amplitude samples loaded (5 ms onset resolution)')
+    else:
+        print(f'  No emg_amplitude.csv found — onset will use prediction-stride fallback')
 
     print(f'Loading rest session  : {rest_csv}')
     rest_records = load_records(rest_csv)
@@ -685,7 +916,7 @@ def main():
     metrics   = compute_unified_metrics(hold_recs, gesture_records,
                                         all_phase_recs, infer_ms_all)
     g_metrics = compute_metrics(gesture_records)
-    lat_data  = compute_latency_and_stability(gesture_records)
+    lat_data  = compute_latency_and_stability(gesture_records, amp_samples)
 
     lats = np.array(lat_data['latencies'])   * 1000  # ms
     tts  = np.array(lat_data['times_to_stable']) * 1000
@@ -750,7 +981,24 @@ def main():
     print('\n── Per-class metrics ─────────────────────────────────────')
     plot_per_class_metrics(
         y_true_hold, y_raw_hold,
-        os.path.join(out_dir, 'per_class_metrics.png'))
+        os.path.join(out_dir, 'per_class_metrics.png'),
+        title_suffix='hold phase (steady state)')
+
+    y_true_gest_all = [r['true']     for r in gesture_records]
+    y_raw_gest_all  = [r['raw_pred'] for r in gesture_records]
+    plot_per_class_metrics(
+        y_true_gest_all, y_raw_gest_all,
+        os.path.join(out_dir, 'per_class_metrics_all_phases.png'),
+        title_suffix='all gesture phases (tr-in + hold + tr-out)')
+
+    plot_transition_confusion(
+        metrics,
+        os.path.join(out_dir, 'transition_confusion_raw.png'),
+        smoothed=False)
+    plot_transition_confusion(
+        metrics,
+        os.path.join(out_dir, 'transition_confusion_smoothed.png'),
+        smoothed=True)
 
     plot_confidence_histogram(
         merged_records,
@@ -774,7 +1022,8 @@ def main():
     else:
         plot_trial_num = min(_group_by_trial(gesture_records).keys())
     plot_trial_confidence(gesture_records, plot_trial_num,
-                          os.path.join(out_dir, 'trial_confidence_example.png'))
+                          os.path.join(out_dir, 'trial_confidence_example.png'),
+                          amp_samples=amp_samples)
 
     # ── Gesture phase breakdown ───────────────────────────────────────────────
     print('\n── Gesture-phase plots ───────────────────────────────────')
