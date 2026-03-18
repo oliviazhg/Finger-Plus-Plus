@@ -2,6 +2,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <Dynamixel2Arduino.h>
+#include <Wire.h>
+#include <Adafruit_ADS1X15.h>
 
 const char* ssid = "*";
 const char* password = "*";
@@ -23,6 +25,20 @@ const int32_t BAUDRATE = 115200;
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 
 unsigned long lastTelemetryMs = 0;
+
+const int B1_SDA = D4;
+const int B1_SCL = D5;
+const int B2_SDA = D9;
+const int B2_SCL = D8; 
+
+Adafruit_ADS1115 ads_base;   // Bus 1, 0x49
+Adafruit_ADS1115 ads_middle; // Bus 2, 0x48
+Adafruit_ADS1115 ads_tip;    // Bus 2, 0x49
+
+// Calibration ranges
+const int BASE_MIN = 24489;  const int BASE_MAX = 24770;
+const int MID_MIN  = 24442;  const int MID_MAX  = 24846;
+const int TIP_MIN  = 24509;  const int TIP_MAX  = 24791;
 
 void setupMotors() {
   dxl.begin(BAUDRATE);
@@ -77,9 +93,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   int32_t target_pos = doc["position"];
 
   if (target_id == 1) {
-    target_pos = constrain(target_pos, 3000, 4300);
+    target_pos = constrain(target_pos, 0, 1600);
   } else if (target_id == 2) {
-    target_pos = constrain(target_pos, 3000, 6900);
+    target_pos = constrain(target_pos, 2300, 6500);
   }
 
   dxl.setGoalPosition(target_id, target_pos);
@@ -92,6 +108,22 @@ void setup() {
   DXL_SERIAL.begin(BAUDRATE, SERIAL_8N1, DXL_RX_PIN, DXL_TX_PIN);
   
   setupMotors();
+
+  // Initialize FSRs (Bus 1)
+  Wire.begin(B1_SDA, B1_SCL);     
+  Wire.setClock(400000); 
+  ads_base.setGain(GAIN_ONE); 
+  ads_base.begin(0x49, &Wire);
+
+  // Initialize FSRs (Bus 2)
+  Wire.end();
+  delay(10); 
+  Wire.begin(B2_SDA, B2_SCL);
+  Wire.setClock(400000);
+  ads_middle.setGain(GAIN_ONE);
+  ads_tip.setGain(GAIN_ONE);
+  ads_middle.begin(0x48, &Wire);
+  ads_tip.begin(0x49, &Wire);
 
   Serial.print("Connecting to WiFi");
   WiFi.begin(ssid, password);
@@ -129,21 +161,62 @@ void loop() {
 
   unsigned long now = millis();
 
-  // Send motor position to UI every 50ms
+  // Send motor position and sensor data to UI every 50ms
   if (now - lastTelemetryMs >= 50) {
     lastTelemetryMs = now;
 
     int32_t pos1 = dxl.getPresentPosition(DXL_ID_1);
     int32_t pos2 = dxl.getPresentPosition(DXL_ID_2);
 
-    // {"m1_pos": X, "m2_pos": Y}
-    StaticJsonDocument<100> telemetryDoc;
-    telemetryDoc["m1_pos"] = pos1;
-    telemetryDoc["m2_pos"] = pos2;
+    // Read Bus 1
+    Wire.end();
+    delay(5); 
+    Wire.begin(B1_SDA, B1_SCL);
+    delay(5);
+    int16_t raw_base = ads_base.readADC_SingleEnded(0);
 
-    char telemetryBuffer[100];
-    serializeJson(telemetryDoc, telemetryBuffer);
+    // Read Bus 2
+    Wire.end();
+    delay(5);
+    Wire.begin(B2_SDA, B2_SCL);
+    delay(5);
+    int16_t raw_middle = ads_middle.readADC_SingleEnded(0);
+    int16_t raw_tip    = ads_tip.readADC_SingleEnded(0);
+
+    // Calibration
+    float base_ratio   = constrain((float)(raw_base - BASE_MIN) / (BASE_MAX - BASE_MIN), 0.0, 1.0);
+    float middle_ratio = constrain((float)(raw_middle - MID_MIN) / (MID_MAX - MID_MIN), 0.0, 1.0);
+    float tip_ratio    = constrain((float)(raw_tip - TIP_MIN) / (TIP_MAX - TIP_MIN), 0.0, 1.0);
+
+    float base_curved   = pow(base_ratio, 1.0);
+    float middle_curved = pow(middle_ratio, 1.0);
+    float tip_curved    = pow(tip_ratio, 1.0);
+
+    int final_base   = (base_curved * 100 < 2) ? 0 : (int)(base_curved * 100);
+    int final_middle = (middle_curved * 100 < 2) ? 0 : (int)(middle_curved * 100);
+    int final_tip    = (tip_curved * 100 < 2) ? 0 : (int)(tip_curved * 100);
+
+    StaticJsonDocument<100> motorDoc;
+    motorDoc["m1_pos"] = pos1;
+    motorDoc["m2_pos"] = pos2;
+    char motorBuffer[100];
+    serializeJson(motorDoc, motorBuffer);
+    client.publish("motor/telemetry", motorBuffer);
+
+    StaticJsonDocument<200> sensorDoc;
     
-    client.publish("motor/telemetry", telemetryBuffer);
+    JsonArray fsrArray = sensorDoc.createNestedArray("fsr");
+    fsrArray.add(final_base);
+    fsrArray.add(final_middle);
+    fsrArray.add(final_tip);
+
+    JsonArray imuArray = sensorDoc.createNestedArray("imu");
+    imuArray.add(0);
+    imuArray.add(0);
+    imuArray.add(0);
+
+    char sensorBuffer[200];
+    serializeJson(sensorDoc, sensorBuffer);
+    client.publish("sensor/hardware_telemetry1", sensorBuffer);
   }
 }

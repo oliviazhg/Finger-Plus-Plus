@@ -114,9 +114,7 @@ export default function DataSidebar({ data }) {
                 }}
               >
                 <span>Base Force</span>
-                <span>
-                  {Math.round(getPercentage(data.sensors.fsr?.[0] || 0))}%
-                </span>
+                <span>{data.sensors.fsr?.[0] || 0}%</span>
               </div>
               <div
                 style={{
@@ -129,7 +127,7 @@ export default function DataSidebar({ data }) {
                 <div
                   style={{
                     height: "100%",
-                    width: `${getPercentage(data.sensors.fsr?.[0] || 0)}%`,
+                    width: `${data.sensors.fsr?.[0] || 0}%`,
                     background: "#60a5fa",
                     transition: "width 0.1s ease-out",
                   }}
@@ -148,16 +146,7 @@ export default function DataSidebar({ data }) {
                 }}
               >
                 <span>Mid Force</span>
-                <span>
-                  {Math.round(
-                    getPercentage(
-                      Math.floor(
-                        (data.sensors.fsr?.[0] + data.sensors.fsr?.[2]) / 3,
-                      ) || 0,
-                    ),
-                  )}
-                  %
-                </span>
+                <span>{data.sensors.fsr?.[1] || 0}%</span>
               </div>
               <div
                 style={{
@@ -170,7 +159,7 @@ export default function DataSidebar({ data }) {
                 <div
                   style={{
                     height: "100%",
-                    width: `${getPercentage(data.sensors.fsr?.[1] || 0)}%`,
+                    width: `${data.sensors.fsr?.[1] || 0}%`,
                     background: "#60a5fa",
                     transition: "width 0.1s ease-out",
                   }}
@@ -189,9 +178,7 @@ export default function DataSidebar({ data }) {
                 }}
               >
                 <span>Tip Force</span>
-                <span>
-                  {Math.round(getPercentage(data.sensors.fsr?.[2] || 0))}%
-                </span>
+                <span>{data.sensors.fsr?.[2] || 0}%</span>
               </div>
               <div
                 style={{
@@ -204,7 +191,7 @@ export default function DataSidebar({ data }) {
                 <div
                   style={{
                     height: "100%",
-                    width: `${getPercentage(data.sensors.fsr?.[2] || 0)}%`,
+                    width: `${data.sensors.fsr?.[2] || 0}%`,
                     background: "#60a5fa",
                     transition: "width 0.1s ease-out",
                   }}
