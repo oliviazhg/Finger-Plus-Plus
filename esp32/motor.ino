@@ -42,6 +42,12 @@ const int TIP_MIN  = 24509;  const int TIP_MAX  = 24791;
 
 String current_sys_mode = "ui";
 
+int32_t latest_m1_target = -1;
+int32_t latest_m2_target = -1;
+bool m1_needs_update = false;
+bool m2_needs_update = false;
+
+
 void setupMotors() {
   dxl.begin(BAUDRATE);
   dxl.setPortProtocolVersion(DXL_PROTOCOL_VERSION);
@@ -85,19 +91,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   if (strcmp(topic, "fsr/finger/m1") == 0) {
     if (current_sys_mode != "fsr") return; 
-
-    int32_t target_m1 = doc["value"];
-    target_m1 = constrain(target_m1, 0, 1600);
-    dxl.setGoalPosition(1, target_m1);
+    latest_m1_target = constrain((int32_t)doc["value"], 0, 1600);
+    m1_needs_update = true;
     return;
   }
   
   if (strcmp(topic, "fsr/finger/m2") == 0) {
     if (current_sys_mode != "fsr") return; 
-
-    int32_t target_m2 = doc["value"];
-    target_m2 = constrain(target_m2, 2100, 5800);
-    dxl.setGoalPosition(2, target_m2);
+    latest_m2_target = constrain((int32_t)doc["value"], 2100, 5800);
+    m2_needs_update = true;
     return;
   }
 
@@ -110,7 +112,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     // Read current position and set it as the goal to stop
       int32_t current_pos = dxl.getPresentPosition(target_id);
       dxl.setGoalPosition(target_id, current_pos);
-    Serial.printf("[UI] Motor %d Halted at %d\n", target_id, current_pos);
+    // Serial.printf("[UI] Motor %d Halted at %d\n", target_id, current_pos);
       return;
     }
 
@@ -182,32 +184,42 @@ void reconnect() {
 }
 
 void loop() {
-  if (!client.connected()) {
-    reconnect();
+  if (!client.connected()) reconnect();
+  
+  client.loop(); 
+
+  if (current_sys_mode == "fsr") {
+    if (m1_needs_update) {
+      dxl.setGoalPosition(1, latest_m1_target);
+      m1_needs_update = false; // Reset until the next packet arrives
+    }
+    if (m2_needs_update) {
+      dxl.setGoalPosition(2, latest_m2_target);
+      m2_needs_update = false; // Reset until the next packet arrives
+    }
   }
-  client.loop();
 
   unsigned long now = millis();
 
-  // Send motor position and sensor data to UI every 50ms
-  if (now - lastTelemetryMs >= 50) {
+  // Send motor position and sensor data to UI every 100ms
+  if (now - lastTelemetryMs >= 100) { 
     lastTelemetryMs = now;
 
     int32_t pos1 = dxl.getPresentPosition(DXL_ID_1);
     int32_t pos2 = dxl.getPresentPosition(DXL_ID_2);
 
     // Read Bus 1
-    Wire.end();
-    delay(5); 
-    Wire.begin(B1_SDA, B1_SCL);
-    delay(5);
+    Wire.end(); 
+    delay(1); 
+    Wire.begin(B1_SDA, B1_SCL); 
+    delay(1);
     int16_t raw_base = ads_base.readADC_SingleEnded(0);
 
     // Read Bus 2
-    Wire.end();
-    delay(5);
+    Wire.end(); 
+    delay(1);
     Wire.begin(B2_SDA, B2_SCL);
-    delay(5);
+    delay(1);
     int16_t raw_middle = ads_middle.readADC_SingleEnded(0);
     int16_t raw_tip    = ads_tip.readADC_SingleEnded(0);
 

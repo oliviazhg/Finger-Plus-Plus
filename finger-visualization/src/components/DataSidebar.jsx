@@ -279,7 +279,7 @@ export default function DataSidebar({ data }) {
               textAlign: "center",
             }}
           >
-            {data.myo.state || "UNKNOWN"}
+            {data.myo.state.toUpperCase() || "UNKNOWN"}
           </div>
         </div>
       </section>
