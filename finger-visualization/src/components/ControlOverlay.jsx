@@ -85,7 +85,7 @@ export default function ControlOverlay({ activeKeys, onSetPosition }) {
             type="number"
             value={m1Pos}
             onChange={(e) => setM1Pos(e.target.value)}
-            placeholder="4300 to 3000"
+            placeholder="1600 to 0"
             style={{
               background: "#0f172a",
               border: "1px solid #334155",
@@ -120,7 +120,7 @@ export default function ControlOverlay({ activeKeys, onSetPosition }) {
             type="number"
             value={m2Pos}
             onChange={(e) => setM2Pos(e.target.value)}
-            placeholder="3000 to 6900"
+            placeholder="2800 to 6100"
             style={{
               background: "#0f172a",
               border: "1px solid #334155",

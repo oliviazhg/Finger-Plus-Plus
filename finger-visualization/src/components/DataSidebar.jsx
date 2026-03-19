@@ -8,7 +8,7 @@ export default function DataSidebar({ data }) {
           HARDWARE DATA
         </h3>
 
-        <div>{data.sensors.toe_fsr?.join(", ")}</div>
+        {/* <div>{data.sensors.toe_fsr?.join(", ")}</div> */}
 
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <div>
