@@ -21,7 +21,7 @@ export default function FingerDashboard() {
     sensors: {
       fsr: [0, 0, 0],
       imu: [0, 0, 0],
-      toe_fsr: [0, 0],
+      toe_fsr: [0, 0, 0],
       motors: [150, 4000],
     },
     myo: { state: "UNKNOWN" },

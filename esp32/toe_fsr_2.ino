@@ -83,8 +83,8 @@ void loop() {
   client.publish(TOPIC_TELEMETRY, telBuf);
 
   if (indModeActive) {
-    int targetM2 = map(rawM2, 0, 3000, 2100, 5800);
-    targetM2 = constrain(targetM2, 2100, 5800);
+    int targetM2 = map(rawM2, 0, 3000, 2800, 6100);
+    targetM2 = constrain(targetM2, 2800, 6100);
 
     StaticJsonDocument<64> m2Doc;
     m2Doc["value"]  = targetM2;

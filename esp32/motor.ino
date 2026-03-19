@@ -98,7 +98,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   
   if (strcmp(topic, "fsr/finger/m2") == 0) {
     if (current_sys_mode != "fsr") return; 
-    latest_m2_target = constrain((int32_t)doc["value"], 2100, 5800);
+    latest_m2_target = constrain((int32_t)doc["value"], 2800, 6100);
     m2_needs_update = true;
     return;
   }
@@ -121,7 +121,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (target_id == 1) {
       target_pos = constrain(target_pos, 0, 1600);
     } else if (target_id == 2) {
-      target_pos = constrain(target_pos, 2100, 5800);
+      target_pos = constrain(target_pos, 2800, 6100);
     }
 
     dxl.setGoalPosition(target_id, target_pos);

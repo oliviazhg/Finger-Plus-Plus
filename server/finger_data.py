@@ -30,7 +30,7 @@ live_m1_pos = 150
 live_m2_pos = 4000
 live_fsr = [0, 0, 0]
 live_imu = [0, 0, 0]
-live_toe_fsr = [0, 0]
+live_toe_fsr = [0, 0, 0] # [toe_m1, toe_m2, heel]
 
 def map_range(x, in_min, in_max, out_min, out_max):
     """Maps a number from one range to another, with strict clamping"""
@@ -62,6 +62,8 @@ def on_mqtt_message(client, userdata, msg):
             data = json.loads(msg.payload.decode())
             if "toe_m1" in data:
                 live_toe_fsr[0] = data["toe_m1"]
+            if "heel_fsr" in data:
+                live_toe_fsr[2] = data["heel_fsr"]
         except json.JSONDecodeError:
             pass
             
@@ -109,7 +111,7 @@ async def handle_connection(websocket):
                 base_sweep_factor = map_range(live_m1_pos, 1600, 0, 0.0, 1.0)
                 
                 # Motor 2: Resting at 2300 (0.0), Curl to 6500 (1.0)
-                curl_factor = map_range(live_m2_pos, 2100, 5800, 0.0, 1.0)
+                curl_factor = map_range(live_m2_pos, 2800, 6100, 0.0, 1.0)
 
                 payload = {
                     "angles": {
@@ -157,7 +159,7 @@ async def handle_connection(websocket):
                         if motor_id == 1:
                             target_pos = 1600 if direction == "forward" else 0
                         elif motor_id == 2:
-                            target_pos = 5800 if direction == "forward" else 2100
+                            target_pos = 6100 if direction == "forward" else 2800
 
                         mqtt_payload = {
                             "id": motor_id, 
