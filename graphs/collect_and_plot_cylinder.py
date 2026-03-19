@@ -105,16 +105,25 @@ def _countdown(seconds):
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
 def _plot(raw, rect):
+    plt.rcParams.update({
+        'font.family':     'sans-serif',
+        'font.sans-serif': ['Roboto', 'Arial', 'Helvetica', 'DejaVu Sans'],
+        'font.weight':     'normal',
+    })
+
     t_init_end   = INIT_SAMPLES    / SAMPLE_RATE
     t_steady_end = (INIT_SAMPLES + STEADY_SAMPLES) / SAMPLE_RATE
     t = np.arange(len(raw)) / SAMPLE_RATE
 
-    fig, axes = plt.subplots(8, 2, figsize=(18, 12), sharex=True)
-    fig.suptitle("Cylindrical Grasp — Filtered (Bipolar) vs Rectified EMG",
-                 fontsize=32, fontweight='bold')
+    fig, axes = plt.subplots(8, 2, figsize=(21.6, 10), sharex=True,
+                             constrained_layout=False)
+    fig.subplots_adjust(hspace=0.08)
 
-    axes[0, 0].set_title("Filtered — raw bipolar (±128)", fontsize=27, pad=8)
-    axes[0, 1].set_title("Rectified — absolute value (0–128)", fontsize=27, pad=8)
+    fig.suptitle("Cylindrical Grasp — Filtered (Bipolar) vs Rectified EMG",
+                 fontsize=24, fontweight='normal', y=0.995)
+
+    axes[0, 0].set_title("Filtered — raw bipolar (±128)",      fontsize=18, pad=4)
+    axes[0, 1].set_title("Rectified — absolute value (0–128)", fontsize=18, pad=4)
 
     for ch in range(8):
         ax_f = axes[ch, 0]
@@ -131,39 +140,40 @@ def _plot(raw, rect):
         ax_r.set_yticks([0, 64, 128])
 
         for ax in [ax_f, ax_r]:
-            ax.axvspan(0,           t_init_end,   alpha=0.10, color=STAGE_COLORS["Initiation"])
-            ax.axvspan(t_init_end,  t_steady_end, alpha=0.10, color=STAGE_COLORS["Steady"])
-            ax.axvspan(t_steady_end, t[-1],       alpha=0.10, color=STAGE_COLORS["Release"])
+            ax.axvspan(0,            t_init_end,   alpha=0.10, color=STAGE_COLORS["Initiation"])
+            ax.axvspan(t_init_end,   t_steady_end, alpha=0.10, color=STAGE_COLORS["Steady"])
+            ax.axvspan(t_steady_end, t[-1],        alpha=0.10, color=STAGE_COLORS["Release"])
             ax.axvline(t_init_end,   color='gray', linestyle='--', linewidth=0.7, alpha=0.6)
             ax.axvline(t_steady_end, color='gray', linestyle='--', linewidth=0.7, alpha=0.6)
-            ax.tick_params(labelsize=17)
+            ax.tick_params(labelsize=11)
             ax.grid(True, axis='y', alpha=0.25, linewidth=0.5)
 
-        axes[ch, 0].set_ylabel(f"Ch {ch+1}", fontsize=20, rotation=0, labelpad=28)
+        axes[ch, 0].set_ylabel(f"Ch {ch+1}", fontsize=13, rotation=0, labelpad=28)
 
-    # Stage labels on top row
+    # Stage labels on top row — placed via axes transform so they sit just
+    # inside the top edge without overlapping column titles
     for col in range(2):
         for label, x0, x1 in [
-            ("Initiation", 0,           t_init_end),
-            ("Steady",     t_init_end,  t_steady_end),
+            ("Initiation", 0,            t_init_end),
+            ("Steady",     t_init_end,   t_steady_end),
             ("Release",    t_steady_end, t[-1]),
         ]:
             axes[0, col].text(
                 (x0 + x1) / 2, 115,
                 label, ha='center', va='top',
-                fontsize=20, fontweight='bold',
-                color=STAGE_COLORS[label]
+                fontsize=13, fontweight='normal',
+                color=STAGE_COLORS[label],
             )
 
     for col in range(2):
-        axes[-1, col].set_xlabel("Time (s)", fontsize=25)
+        axes[-1, col].set_xlabel("Time (s)", fontsize=17)
 
     patches = [mpatches.Patch(color=c, alpha=0.4, label=l)
                for l, c in STAGE_COLORS.items()]
-    fig.legend(handles=patches, loc='lower center', ncol=3, fontsize=22,
-               bbox_to_anchor=(0.5, 0.0))
+    fig.legend(handles=patches, loc='lower center', ncol=3, fontsize=15,
+               bbox_to_anchor=(0.5, 0.0), frameon=False)
 
-    plt.tight_layout(rect=[0, 0.08, 1, 0.97])
+    plt.tight_layout(rect=[0, 0.07, 1, 0.96])
 
     out_path = os.path.join(OUT_DIR, "cylindrical_live_filtered_vs_rectified.png")
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
