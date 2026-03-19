@@ -296,6 +296,7 @@ def record_phase(model, scaler, scale, true_idx, sub_class, duration, phase, tri
     samples_since_pred = 0
     recent_preds       = deque(maxlen=SMOOTH_N)
     records            = []
+    amp_samples        = []   # per-sample amplitude log for onset detection
     t_start            = time.monotonic()
     t_warmup_end       = t_start + WARMUP_SEC
 
@@ -314,8 +315,17 @@ def record_phase(model, scaler, scale, true_idx, sub_class, duration, phase, tri
         except queue.Empty:
             continue
 
-        buf.append(np.abs(sample) / scale)
+        norm = np.abs(sample) / scale
+        buf.append(norm)
         samples_since_pred += 1
+
+        # Log every sample for high-resolution onset detection (~5 ms @ 200 Hz)
+        amp_samples.append({
+            'trial': trial_num,
+            'phase': phase,
+            't':     elapsed,
+            'peak':  float(norm.max()),
+        })
 
         if len(buf) < WINDOW_SIZE or samples_since_pred < STRIDE:
             continue
@@ -347,7 +357,7 @@ def record_phase(model, scaler, scale, true_idx, sub_class, duration, phase, tri
             })
 
     print()
-    return records
+    return records, amp_samples
 
 
 def _phase_summary(records, true_idx, label):
@@ -795,9 +805,22 @@ def _write_csv(records, out_dir):
     return csv_path
 
 
-def _save_incremental(records, out_dir):
+def _write_amp_csv(amp_samples, out_dir):
+    '''Append per-sample amplitude rows to emg_amplitude.csv (for onset detection).'''
+    csv_path = os.path.join(out_dir, 'emg_amplitude.csv')
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, 'a', newline='') as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(['trial', 'phase', 't', 'peak'])
+        for s in amp_samples:
+            w.writerow([s['trial'], s['phase'], f'{s["t"]:.5f}', f'{s["peak"]:.5f}'])
+
+
+def _save_incremental(records, amp_samples, out_dir):
     '''Write CSV + partial JSON after each trial (no plots, silent).'''
     _write_csv(records, out_dir)
+    _write_amp_csv(amp_samples, out_dir)
     if records:
         json_path = os.path.join(out_dir, 'results.json')
         with open(json_path, 'w') as f:
@@ -857,9 +880,10 @@ def save_dynamic(records, metrics, out_dir):
 
 # ── Save (rest) ───────────────────────────────────────────────────────────────
 
-def _save_rest_incremental(records, out_dir):
+def _save_rest_incremental(records, amp_samples, out_dir):
     '''Write CSV + partial JSON after each rest trial (no plots, silent).'''
     _write_csv(records, out_dir)
+    _write_amp_csv(amp_samples, out_dir)
     if records:
         json_path = os.path.join(out_dir, 'results.json')
         with open(json_path, 'w') as f:
@@ -948,7 +972,8 @@ def main():
         print(f'  Total time      : ~{total_sec:.0f}s ({int(total_sec)//60}m {int(total_sec)%60}s)')
         input('\n  Press Enter to begin...')
 
-        all_records = []
+        all_records  = []
+        all_amp      = []
 
         try:
             for group, positions in dyn_schedule:
@@ -962,9 +987,10 @@ def main():
                         countdown(f'→ {pos.upper()}', 2)
                     else:
                         print(f'  START: {pos.upper()}', flush=True)
-                    recs = record_phase(model, scaler, scale,
-                                       cls_idx, pos, DYNAMIC_SEC, 'dynamic')
+                    recs, amps = record_phase(model, scaler, scale,
+                                             cls_idx, pos, DYNAMIC_SEC, 'dynamic')
                     all_records.extend(recs)
+                    all_amp.extend(amps)
                     _phase_summary(recs, cls_idx, pos)
 
         except KeyboardInterrupt:
@@ -995,6 +1021,7 @@ def main():
                                datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_dynamic')
         print(f'\n── Saving to {out_dir}/ ──────────────────────────────')
         save_dynamic(all_records, metrics, out_dir)
+        _write_amp_csv(all_amp, out_dir)
         print('\nDone.')
         return
 
@@ -1014,6 +1041,7 @@ def main():
         print(f'  Output → {out_dir}/')
 
         all_records = []
+        all_amp     = []
         idx = 0
 
         try:
@@ -1022,13 +1050,14 @@ def main():
                 rest_gap(args.rest, 'REST')
                 print(f'\n  [{trial_num:>2}/{REST_TRIALS}] REST — stay relaxed')
 
-                recs = record_phase(model, scaler, scale,
-                                    REST_IDX, 'rest', args.hold, 'rest',
-                                    trial_num=trial_num)
+                recs, amps = record_phase(model, scaler, scale,
+                                          REST_IDX, 'rest', args.hold, 'rest',
+                                          trial_num=trial_num)
                 _phase_summary(recs, REST_IDX, 'rest')
 
                 all_records.extend(recs)
-                _save_rest_incremental(all_records, out_dir)
+                all_amp.extend(amps)
+                _save_rest_incremental(all_records, all_amp, out_dir)
 
                 action = _post_trial_action()
                 if action == 'pause':
@@ -1038,7 +1067,8 @@ def main():
 
                 if action == 'redo':
                     all_records = [r for r in all_records if r['trial'] != trial_num]
-                    _save_rest_incremental(all_records, out_dir)
+                    all_amp     = [s for s in all_amp     if s['trial'] != trial_num]
+                    _save_rest_incremental(all_records, all_amp, out_dir)
                     print(f'  ↺ Redoing trial {trial_num}...')
                 else:
                     idx += 1
@@ -1096,6 +1126,7 @@ def main():
     print(f'  Output → {out_dir}/')
 
     all_records = []
+    all_amp     = []
     idx = 0
 
     try:
@@ -1108,26 +1139,28 @@ def main():
             print(f'\n  [{trial_num:>2}/{len(schedule)}] {sub_cls.upper()}  ({group})')
 
             print(f'  TRANSITION IN', flush=True)
-            tr_in = record_phase(model, scaler, scale,
-                                 cls_idx, sub_cls, TRANSITION_SEC, 'transition_in',
-                                 trial_num=trial_num)
+            tr_in, amps_in = record_phase(model, scaler, scale,
+                                          cls_idx, sub_cls, TRANSITION_SEC, 'transition_in',
+                                          trial_num=trial_num)
             _phase_summary(tr_in, cls_idx, 'transition in')
 
             print(f'  HOLD', flush=True)
-            hold = record_phase(model, scaler, scale,
-                                cls_idx, sub_cls, args.hold, 'hold',
-                                trial_num=trial_num)
+            hold, amps_hold = record_phase(model, scaler, scale,
+                                           cls_idx, sub_cls, args.hold, 'hold',
+                                           trial_num=trial_num)
             _phase_summary(hold, cls_idx, 'hold')
 
             print(f'  RELEASE back to rest', flush=True)
-            tr_out = record_phase(model, scaler, scale,
-                                  REST_IDX, sub_cls, TRANSITION_SEC, 'transition_out',
-                                  trial_num=trial_num)
+            tr_out, amps_out = record_phase(model, scaler, scale,
+                                            REST_IDX, sub_cls, TRANSITION_SEC, 'transition_out',
+                                            trial_num=trial_num)
             _phase_summary(tr_out, REST_IDX, 'transition out')
 
             trial_recs = tr_in + hold + tr_out
+            trial_amps = amps_in + amps_hold + amps_out
             all_records.extend(trial_recs)
-            _save_incremental(all_records, out_dir)
+            all_amp.extend(trial_amps)
+            _save_incremental(all_records, all_amp, out_dir)
 
             action = _post_trial_action()
             if action == 'pause':
@@ -1137,7 +1170,8 @@ def main():
 
             if action == 'redo':
                 all_records = [r for r in all_records if r['trial'] != trial_num]
-                _save_incremental(all_records, out_dir)
+                all_amp     = [s for s in all_amp     if s['trial'] != trial_num]
+                _save_incremental(all_records, all_amp, out_dir)
                 print(f'  ↺ Redoing trial {trial_num} ({sub_cls})...')
             else:
                 idx += 1
@@ -1190,6 +1224,7 @@ def main():
 
     print(f'\n── Saving final results to {out_dir}/ ───────────────')
     save_all(all_records, metrics, out_dir)
+    _write_amp_csv(all_amp, out_dir)
     print('\nDone.')
 
 

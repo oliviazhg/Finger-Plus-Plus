@@ -74,7 +74,14 @@ from evaluate_realtime_bpnn import (      # noqa: E402
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
 from matplotlib.patches import Patch
+
+matplotlib.rcParams.update({
+    'font.family':     'sans-serif',
+    'font.sans-serif': ['Roboto', 'Arial', 'Helvetica', 'DejaVu Sans'],
+    'font.weight':     'normal',
+})
 from sklearn.metrics import (confusion_matrix, ConfusionMatrixDisplay,
                              classification_report, balanced_accuracy_score)
 
