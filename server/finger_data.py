@@ -26,8 +26,8 @@ system_logs = ["Starting..."]
 LOGS_LENGTH = 30
 
 # Store live hardware values
-live_m1_pos = 150
-live_m2_pos = 4000
+live_m1_pos = 0
+live_m2_pos = 0
 live_fsr = [0, 0, 0]
 live_imu = [0, 0, 0]
 live_toe_fsr = [0, 0, 0] # [toe_m1, toe_m2, heel]
@@ -110,7 +110,7 @@ async def handle_connection(websocket):
                 # Motor 1: Resting at 1600 (0.0), Sweep to 0 (1.0)
                 base_sweep_factor = map_range(live_m1_pos, 1600, 0, 0.0, 1.0)
                 
-                # Motor 2: Resting at 2300 (0.0), Curl to 6500 (1.0)
+                # Motor 2: Resting at 2800 (0.0), Curl to 6100 (1.0)
                 curl_factor = map_range(live_m2_pos, 2800, 6100, 0.0, 1.0)
 
                 payload = {

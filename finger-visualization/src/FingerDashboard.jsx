@@ -22,7 +22,7 @@ export default function FingerDashboard() {
       fsr: [0, 0, 0],
       imu: [0, 0, 0],
       toe_fsr: [0, 0, 0],
-      motors: [150, 4000],
+      motors: [0, 0],
     },
     myo: { state: "UNKNOWN" },
     system: { mode: "ui" },
@@ -226,16 +226,16 @@ export default function FingerDashboard() {
       interval = setInterval(() => {
         const time = Date.now() * 0.002;
 
-        const baseSweepFactor = Math.sin(time * 0.5) * 0.5 + 0.5;
+        const baseSweepFactor = Math.sin(time * 0.5) * 0.5 + 0.3;
         const curlFactor = Math.sin(time) * 0.5 + 0.5;
 
         setData((prev) => ({
           ...prev,
           angles: {
             base: baseSweepFactor,
-            j1: curlFactor * 1.2,
-            j2: curlFactor * 1.5,
-            j3: curlFactor * 1.0,
+            j1: curlFactor * 1.1,
+            j2: curlFactor * 0.8,
+            j3: curlFactor * 0.7,
           },
           sensors: {
             fsr: [
@@ -244,16 +244,16 @@ export default function FingerDashboard() {
               Math.floor(curlFactor * 80),
             ],
             imu: [
-              Math.floor(curlFactor * 1.2 * 57.3),
-              Math.floor(curlFactor * 1.1 * 57.3),
-              Math.floor(curlFactor * 0.4 * 57.3),
+              0,
+              0,
+              0,
             ],
             motors: [
-              Math.floor(baseSweepFactor * -1500 + 500),
-              Math.floor(curlFactor * 4000 + 3000),
+              Math.floor(1280 - 1600 * baseSweepFactor),
+              Math.floor(curlFactor * 3300 + 2800),
             ],
           },
-          myo: { state: curlFactor > 0.6 ? "CLOSED" : "OPEN" },
+          myo: { state: curlFactor > 0.6 ? "rest" : "cylindrical" },
         }));
       }, 50);
     }

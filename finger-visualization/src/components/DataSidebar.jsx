@@ -260,12 +260,13 @@ export default function DataSidebar({ data }) {
       </section>
 
       <section className="card">
-        <h3 style={{ color: "#60a5fa", fontSize: "12px" }}>MYO BAND STATUS</h3>
+        <h3 style={{ color: "#60a5fa", fontSize: "12px" }}>MYO BAND CLASSIFICATION</h3>
         <div
           style={{
             display: "flex",
             justifyContent: "center",
             alignItems: "center",
+            padding: "8px 0",
           }}
         >
           <div
