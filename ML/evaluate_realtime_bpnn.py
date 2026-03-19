@@ -1,0 +1,1232 @@
+'''
+Structured Real-time Evaluation — BPNN
+
+Runs a prompted evaluation session with the Myo armband.
+
+Modes
+-----
+static (default)
+  Each trial has three recorded phases:
+    transition_in  (2s) — user moves from rest into the gesture
+    hold           (Xs) — user holds gesture steady
+    transition_out (2s) — user relaxes back to rest
+  30 trials per gesture group (6 per cyl/lat variant, 15 per palm variant).
+
+dynamic
+  Continuous position sweep — user holds each position for DYNAMIC_SEC seconds.
+
+rest
+  30 trials of rest — measures false-activation rate across all 4 output classes.
+  Each trial records HOLD_SEC seconds of rest with the model running inference.
+
+Between trials there is a REST_GAP_SEC rest period.
+
+Outputs saved to a timestamped folder under inference_eval_bpnn/:
+  static/dynamic:
+    predictions.csv, results.json, confusion matrices, confidence_histogram,
+    subclass_accuracy, group_accuracy, timeline
+  rest:
+    predictions.csv, results.json, confusion_rest.png, accuracy_per_trial.png
+
+Usage:
+  python evaluate_realtime_bpnn.py
+  python evaluate_realtime_bpnn.py --mode rest
+  python evaluate_realtime_bpnn.py --hold 8 --rest 7
+'''
+
+import os
+import csv
+import json
+import time
+import queue
+import struct
+import threading
+import argparse
+from collections import deque
+from datetime import datetime
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+import joblib
+import torch
+import torch.nn as nn
+from sklearn.metrics import (balanced_accuracy_score, classification_report,
+                             confusion_matrix, ConfusionMatrixDisplay)
+from pyomyo import Myo, emg_mode
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+
+RESULTS_DIR    = 'results_bpnn/2026-03-18_01-00-53_GOOD'
+
+# Model output classes — must match training
+CLASSES      = ['cylindrical', 'lateral', 'palm', 'rest']
+GROUP_TO_INT = {g: i for i, g in enumerate(CLASSES)}
+REST_IDX     = GROUP_TO_INT['rest']
+
+# Sub-class variants to test, grouped by model class
+GROUP_VARIANTS = {
+    'cylindrical': [
+        'cylindrical forward vertical',
+        'cylindrical forward horizontal',
+        'cylindrical by side down',
+        'cylindrical by side outstretched horizontal',
+        'cylindrical by side outstretched vertical',
+    ],
+    'lateral': [
+        'lateral palm down',
+        'lateral forward',
+        'lateral by side down',
+        'lateral by side outstretched vertical',
+        'lateral by side outstretched horizontal',
+    ],
+    'palm': [
+        'palm forward',
+        'palm by side outstretched',
+    ],
+}
+GROUPS_ORDERED   = ['cylindrical', 'lateral', 'palm']
+TRIALS_PER_GROUP = 30   # 30÷5=6 per cyl/lat variant, 30÷2=15 per palm variant
+N_SAMPLE_TRIALS  = 5    # trials sampled per variant for variant-level comparison
+REST_TRIALS      = 30   # number of rest trials in rest mode
+
+DYNAMIC_SEC = 2.5   # seconds per position in dynamic mode
+
+# DYNAMIC_VARIANTS matches GROUP_VARIANTS (same positions, different recording protocol)
+DYNAMIC_VARIANTS = {
+    'cylindrical': [
+        'cylindrical forward vertical',
+        'cylindrical forward horizontal',
+        'cylindrical by side down',
+        'cylindrical by side outstretched horizontal',
+        'cylindrical by side outstretched vertical',
+    ],
+    'lateral': [
+        'lateral palm down',
+        'lateral forward',
+        'lateral by side down',
+        'lateral by side outstretched vertical',
+        'lateral by side outstretched horizontal',
+    ],
+    'palm': [
+        'palm forward',
+        'palm by side outstretched',
+    ],
+}
+
+WINDOW_SIZE    = 40
+STRIDE         = 20
+WAMP_THRESH    = 10.0
+SMOOTH_N       = 5
+CALIB_SEC      = 2
+HOLD_SEC       = 5
+TRANSITION_SEC = 2
+REST_GAP_SEC   = 7
+WARMUP_SEC     = 0.5
+
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# ── Model (must match train_model_bpnn.py) ────────────────────────────────────
+
+class BPNN(nn.Module):
+    def __init__(self, dropout=0.0):
+        super().__init__()
+        layers = [nn.Linear(48, 128), nn.ReLU()]
+        if dropout > 0:
+            layers.append(nn.Dropout(dropout))
+        layers.append(nn.Linear(128, 4))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+# ── Myo background thread ─────────────────────────────────────────────────────
+
+_emg_queue  = queue.Queue()
+_stop_event = threading.Event()
+
+
+def _myo_worker():
+    m = Myo(mode=emg_mode.FILTERED)
+    m.connect()
+    m.add_emg_handler(
+        lambda emg, moving: _emg_queue.put(np.array(emg, dtype=np.float32))
+    )
+    m.set_leds([0, 128, 255], [0, 128, 255])
+    m.vibrate(1)
+    while not _stop_event.is_set():
+        try:
+            m.run()
+        except struct.error:
+            pass
+    m.set_leds([0, 0, 0], [0, 0, 0])
+    m.disconnect()
+
+
+# ── Calibration ───────────────────────────────────────────────────────────────
+
+def calibrate():
+    n = int(CALIB_SEC * 200)
+    print(f'  Relax your hand — calibrating for {CALIB_SEC}s...', flush=True)
+    while not _emg_queue.empty():
+        _emg_queue.get_nowait()
+    samples = []
+    while len(samples) < n:
+        try:
+            samples.append(np.abs(_emg_queue.get(timeout=0.5)))
+        except queue.Empty:
+            print('  Warning: no EMG — check connection.')
+    scale = np.array(samples).std(axis=0)
+    scale[scale < 1.0] = 1.0
+    print(f'  Scale: {scale.round(1)}')
+    return scale
+
+
+# ── Feature extraction (must match process_data.py) ───────────────────────────
+
+def extract_features(window):
+    diff = np.diff(window, axis=0)
+    mav  = window.mean(axis=0)
+    rms  = np.sqrt((window ** 2).mean(axis=0))
+    var  = window.var(axis=0)
+    wl   = np.abs(diff).sum(axis=0)
+    ssc  = (np.diff(np.sign(diff), axis=0) != 0).sum(axis=0).astype(np.float32)
+    wamp = (np.abs(diff) > WAMP_THRESH).sum(axis=0).astype(np.float32)
+    return np.concatenate([mav, rms, var, wl, ssc, wamp])
+
+
+# ── Inference ─────────────────────────────────────────────────────────────────
+
+def infer(model, scaler, features):
+    x   = scaler.transform(features.reshape(1, -1))
+    x_t = torch.tensor(x, dtype=torch.float32).to(DEVICE)
+    with torch.no_grad():
+        logits = model(x_t)
+        proba  = torch.softmax(logits, dim=1).cpu().numpy()[0]
+    return int(proba.argmax()), proba
+
+
+# ── Trial schedule ────────────────────────────────────────────────────────────
+
+def build_trial_schedule(seed=42):
+    '''
+    Returns a list of (sub_class, group) tuples.
+    Groups are presented in order (cylindrical → lateral → palm).
+    Within each group, TRIALS_PER_GROUP trials are distributed as evenly as
+    possible across variants and shuffled.
+    '''
+    rng      = np.random.default_rng(seed)
+    schedule = []
+    for group in GROUPS_ORDERED:
+        variants = GROUP_VARIANTS[group]
+        n        = TRIALS_PER_GROUP
+        base, rem = divmod(n, len(variants))
+        counts   = [base + (1 if i < rem else 0) for i in range(len(variants))]
+        trials   = []
+        for variant, count in zip(variants, counts):
+            trials.extend([(variant, group)] * count)
+        rng.shuffle(trials)
+        schedule.extend(trials)
+    return schedule
+
+
+def build_dynamic_schedule():
+    '''
+    Returns [(group, [positions...])] with position order randomised per call.
+    One sweep per group; order differs each run.
+    '''
+    rng = np.random.default_rng()
+    schedule = []
+    for group in GROUPS_ORDERED:
+        positions = list(DYNAMIC_VARIANTS[group])
+        rng.shuffle(positions)
+        schedule.append((group, positions))
+    return schedule
+
+
+# ── Session helpers ───────────────────────────────────────────────────────────
+
+def countdown(label, seconds):
+    for remaining in range(seconds, 0, -1):
+        print(f'\r  {label} in {remaining}s...  ', end='', flush=True)
+        time.sleep(1)
+    print()
+
+
+def rest_gap(seconds, next_label):
+    quiet_sec = max(0, seconds - 3)
+    if quiet_sec > 0:
+        print(f'  Resting...', flush=True)
+        time.sleep(quiet_sec)
+    countdown(f'Get ready: {next_label.upper()}', min(3, seconds))
+
+
+def drain_queue():
+    while not _emg_queue.empty():
+        try:
+            _emg_queue.get_nowait()
+        except queue.Empty:
+            break
+
+
+def _post_trial_action():
+    '''Prompt after each trial. Returns "continue", "redo", or "pause".'''
+    while True:
+        resp = input('  → [Enter] continue  [r] redo  [p] pause : ').strip().lower()
+        if resp == '':
+            return 'continue'
+        if resp == 'r':
+            return 'redo'
+        if resp == 'p':
+            return 'pause'
+
+
+def record_phase(model, scaler, scale, true_idx, sub_class, duration, phase, trial_num=0):
+    '''
+    Record predictions for `duration` seconds.
+
+    true_idx  : ground truth group index (0=cyl, 1=lat, 2=palm, 3=rest)
+    sub_class : specific variant being performed (stored in every record)
+    phase     : 'transition_in', 'hold', or 'transition_out'
+    trial_num : trial counter used for subsampled variant-level analysis
+    '''
+    drain_queue()
+
+    buf                = deque(maxlen=WINDOW_SIZE)
+    samples_since_pred = 0
+    recent_preds       = deque(maxlen=SMOOTH_N)
+    records            = []
+    amp_samples        = []   # per-sample amplitude log for onset detection
+    t_start            = time.monotonic()
+    t_warmup_end       = t_start + WARMUP_SEC
+
+    while True:
+        now     = time.monotonic()
+        elapsed = now - t_start
+        if elapsed >= duration:
+            break
+
+        frac = elapsed / duration
+        bar  = '█' * int(frac * 20) + '░' * (20 - int(frac * 20))
+        print(f'\r  ▶ [{bar}] {elapsed:.1f}s  ', end='', flush=True)
+
+        try:
+            sample = _emg_queue.get(timeout=0.05)
+        except queue.Empty:
+            continue
+
+        norm = np.abs(sample) / scale
+        buf.append(norm)
+        samples_since_pred += 1
+
+        # Log every sample for high-resolution onset detection (~5 ms @ 200 Hz)
+        amp_samples.append({
+            'trial': trial_num,
+            'phase': phase,
+            't':     elapsed,
+            'peak':  float(norm.max()),
+        })
+
+        if len(buf) < WINDOW_SIZE or samples_since_pred < STRIDE:
+            continue
+
+        samples_since_pred = 0
+        window   = np.array(buf)
+        features = extract_features(window)
+        mav_max  = float(window.mean(axis=0).max())   # peak-channel MAV for onset detection
+
+        t0 = time.monotonic()
+        raw_pred, proba = infer(model, scaler, features)
+        infer_ms = (time.monotonic() - t0) * 1000
+
+        recent_preds.append(raw_pred)
+        smoothed = int(np.bincount(list(recent_preds), minlength=len(CLASSES)).argmax())
+
+        if time.monotonic() >= t_warmup_end:
+            records.append({
+                't':             elapsed,
+                'trial':         trial_num,
+                'true':          true_idx,
+                'sub_class':     sub_class,
+                'phase':         phase,
+                'raw_pred':      raw_pred,
+                'smoothed_pred': smoothed,
+                'proba':         proba.tolist(),
+                'infer_ms':      infer_ms,
+                'mav_max':       mav_max,
+            })
+
+    print()
+    return records, amp_samples
+
+
+def _phase_summary(records, true_idx, label):
+    if not records:
+        return
+    n        = len(records)
+    correct  = sum(r['raw_pred'] == true_idx for r in records)
+    ok       = '✓' if correct > n / 2 else '✗'
+    conf     = np.mean([max(r['proba']) for r in records])
+    infer_ms = np.mean([r['infer_ms'] for r in records])
+    print(f'  └ {label:<16} {correct:>2}/{n}  {ok}  conf: {conf:.2f}  infer: {infer_ms:.1f}ms')
+
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
+
+def _phase_records(records, phase):
+    return [r for r in records if r['phase'] == phase]
+
+
+def _acc_metrics(recs):
+    if not recs:
+        return None
+    y_true     = np.array([r['true']         for r in recs])
+    y_raw      = np.array([r['raw_pred']      for r in recs])
+    y_smoothed = np.array([r['smoothed_pred'] for r in recs])
+    infer_ms   = np.array([r['infer_ms']      for r in recs])
+
+    # Get unique classes present in the data
+    unique_classes = np.unique(np.concatenate([y_true, y_raw, y_smoothed]))
+    target_names = [CLASSES[i] for i in unique_classes] if len(unique_classes) > 0 else CLASSES
+
+    return {
+        'raw_balanced_acc':      float(balanced_accuracy_score(y_true, y_raw)),
+        'smoothed_balanced_acc': float(balanced_accuracy_score(y_true, y_smoothed)),
+        'raw_report':      classification_report(y_true, y_raw,
+                               target_names=target_names, output_dict=True,
+                               zero_division=0, labels=unique_classes),
+        'smoothed_report': classification_report(y_true, y_smoothed,
+                               target_names=target_names, output_dict=True,
+                               zero_division=0, labels=unique_classes),
+        'raw_cm':      confusion_matrix(y_true, y_raw,
+                           labels=unique_classes, normalize='true').tolist(),
+        'smoothed_cm': confusion_matrix(y_true, y_smoothed,
+                           labels=unique_classes, normalize='true').tolist(),
+        'target_names':   target_names,
+        'n_predictions':  len(recs),
+        'mean_infer_ms':  float(infer_ms.mean()),
+        'std_infer_ms':   float(infer_ms.std()),
+    }
+
+
+def _subclass_acc(records, phase, true_idx_fn, seed=0):
+    '''
+    Per-sub-class accuracy using N_SAMPLE_TRIALS randomly sampled trials per variant.
+    Subsampling equalises the comparison across variants regardless of trial count.
+    '''
+    all_variants = [v for g in GROUPS_ORDERED for v in GROUP_VARIANTS[g]]
+    recs_phase   = _phase_records(records, phase)
+    rng          = np.random.default_rng(seed)
+    out = {}
+    for variant in all_variants:
+        v_recs = [r for r in recs_phase if r['sub_class'] == variant]
+        if not v_recs:
+            continue
+        trial_nums  = list({r['trial'] for r in v_recs})
+        n           = min(N_SAMPLE_TRIALS, len(trial_nums))
+        sampled     = set(rng.choice(trial_nums, size=n, replace=False).tolist())
+        s_recs      = [r for r in v_recs if r['trial'] in sampled]
+        expected    = true_idx_fn(variant)
+        correct     = sum(r['raw_pred'] == expected for r in s_recs)
+        out[variant] = float(correct / len(s_recs)) if s_recs else 0.0
+    return out
+
+
+def compute_metrics(records):
+    hold_recs   = _phase_records(records, 'hold')
+    tr_in_recs  = _phase_records(records, 'transition_in')
+    tr_out_recs = _phase_records(records, 'transition_out')
+    infer_ms    = np.array([r['infer_ms'] for r in records])
+
+    def group_idx(variant):
+        return GROUP_TO_INT[next(g for g, vs in GROUP_VARIANTS.items() if variant in vs)]
+
+    def _group_mean_acc(phase_recs, expected_fn):
+        '''Group accuracy = mean of per-variant accuracies (all trials, equal weight per variant).'''
+        out = {}
+        for group in GROUPS_ORDERED:
+            cls_idx      = GROUP_TO_INT[group]
+            variant_accs = []
+            for variant in GROUP_VARIANTS[group]:
+                v_recs = [r for r in phase_recs if r['sub_class'] == variant]
+                if v_recs:
+                    correct = sum(r['raw_pred'] == expected_fn(cls_idx) for r in v_recs)
+                    variant_accs.append(correct / len(v_recs))
+            if variant_accs:
+                out[group] = float(np.mean(variant_accs))
+        return out
+
+    # Overall transition-out → rest accuracy (pooled, for reference)
+    tr_out_acc = None
+    if tr_out_recs:
+        correct    = sum(r['raw_pred'] == REST_IDX for r in tr_out_recs)
+        tr_out_acc = float(correct / len(tr_out_recs))
+
+    return {
+        'hold':                            _acc_metrics(hold_recs),
+        'transition_in':                   _acc_metrics(tr_in_recs),
+        'transition_out':                  _acc_metrics(tr_out_recs),
+        'hold_acc_per_group':              _group_mean_acc(hold_recs,    lambda i: i),
+        'transition_in_acc_per_group':     _group_mean_acc(tr_in_recs,   lambda i: i),
+        'transition_out_acc_per_group':    _group_mean_acc(tr_out_recs,  lambda _: REST_IDX),
+        'transition_out_rest_acc':         tr_out_acc,
+        'hold_acc_per_subclass':           _subclass_acc(records, 'hold',
+                                               lambda v: group_idx(v)),
+        'transition_in_acc_per_subclass':  _subclass_acc(records, 'transition_in',
+                                               lambda v: group_idx(v)),
+        'transition_out_acc_per_subclass': _subclass_acc(records, 'transition_out',
+                                               lambda v: REST_IDX),
+        'n_sample_trials': N_SAMPLE_TRIALS,
+        'mean_infer_ms':   float(infer_ms.mean()),
+        'std_infer_ms':    float(infer_ms.std()),
+        'n_predictions':   len(records),
+        'class_order':     CLASSES,
+    }
+
+
+def compute_dynamic_metrics(records):
+    pos_to_group  = {v: g for g, vs in DYNAMIC_VARIANTS.items() for v in vs}
+    all_positions = [v for g in GROUPS_ORDERED for v in DYNAMIC_VARIANTS[g]]
+
+    acc_per_pos = {}
+    for pos in all_positions:
+        recs = [r for r in records if r['sub_class'] == pos]
+        if recs:
+            expected = GROUP_TO_INT[pos_to_group[pos]]
+            correct  = sum(r['raw_pred'] == expected for r in recs)
+            acc_per_pos[pos] = float(correct / len(recs))
+
+    acc_per_group = {}
+    for group in GROUPS_ORDERED:
+        cls_idx = GROUP_TO_INT[group]
+        recs = [r for r in records if r['true'] == cls_idx]
+        if recs:
+            correct = sum(r['raw_pred'] == cls_idx for r in recs)
+            acc_per_group[group] = float(correct / len(recs))
+
+    y_true   = np.array([r['true']     for r in records])
+    y_raw    = np.array([r['raw_pred'] for r in records])
+    infer_ms = np.array([r['infer_ms'] for r in records])
+    return {
+        'dynamic_acc_per_position': acc_per_pos,
+        'dynamic_acc_per_group':    acc_per_group,
+        'raw_balanced_acc':  float(balanced_accuracy_score(y_true, y_raw)),
+        'raw_cm':  confusion_matrix(y_true, y_raw,
+                       labels=range(len(CLASSES)), normalize='true').tolist(),
+        'mean_infer_ms':  float(infer_ms.mean()),
+        'std_infer_ms':   float(infer_ms.std()),
+        'n_predictions':  len(records),
+        'class_order':    CLASSES,
+    }
+
+
+def compute_rest_metrics(records):
+    '''Metrics for a rest-only evaluation session.'''
+    y_raw    = np.array([r['raw_pred']      for r in records])
+    y_smooth = np.array([r['smoothed_pred'] for r in records])
+    infer_ms = np.array([r['infer_ms']      for r in records])
+
+    trials = sorted({r['trial'] for r in records})
+    per_trial_acc = {
+        t: float((np.array([r['raw_pred'] for r in records if r['trial'] == t])
+                  == REST_IDX).mean())
+        for t in trials
+    }
+    pred_counts = {c: int((y_raw == i).sum()) for i, c in enumerate(CLASSES)}
+    cm_row = confusion_matrix(
+        [REST_IDX] * len(records), y_raw,
+        labels=range(len(CLASSES)), normalize='true'
+    ).tolist()[REST_IDX]
+
+    return {
+        'rest_acc_raw':      float((y_raw    == REST_IDX).mean()),
+        'rest_acc_smooth':   float((y_smooth == REST_IDX).mean()),
+        'per_trial_acc':     per_trial_acc,
+        'pred_distribution': pred_counts,
+        'confusion_row':     cm_row,
+        'mean_infer_ms':     float(infer_ms.mean()),
+        'std_infer_ms':      float(infer_ms.std()),
+        'n_predictions':     len(records),
+        'n_trials':          len(trials),
+        'class_order':       CLASSES,
+    }
+
+
+# ── Plots ─────────────────────────────────────────────────────────────────────
+
+def plot_confusion_matrix(cm_data, title, path, display_labels=None):
+    if display_labels is None:
+        display_labels = CLASSES[:len(cm_data)]
+    fig, ax = plt.subplots(figsize=(7, 6))
+    ConfusionMatrixDisplay(np.array(cm_data), display_labels=display_labels).plot(
+        ax=ax, colorbar=True, cmap='Blues', values_format='.2f')
+    ax.set_title(title)
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_confidence_histogram(records, path):
+    recs = _phase_records(records, 'hold')
+    if not recs:
+        return
+    probas   = np.array([r['proba']    for r in recs])
+    y_true   = np.array([r['true']     for r in recs])
+    y_raw    = np.array([r['raw_pred'] for r in recs])
+    max_conf = probas.max(axis=1)
+    correct  = y_raw == y_true
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    bins = np.linspace(0, 1, 21)
+    ax.hist(max_conf[correct],  bins=bins, alpha=0.7, label='Correct',   color='steelblue')
+    ax.hist(max_conf[~correct], bins=bins, alpha=0.7, label='Incorrect', color='tomato')
+    ax.set_xlabel('Max class probability')
+    ax.set_ylabel('Prediction count')
+    ax.set_title('Prediction confidence — correct vs incorrect (hold phase)')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_subclass_accuracy(metrics, path):
+    '''Three subplots: hold, transition-in, transition-out accuracy per sub-class.'''
+    GROUP_COLORS = {'cylindrical': 'steelblue', 'lateral': 'darkorange', 'palm': 'seagreen'}
+    all_variants     = [v for g in GROUPS_ORDERED for v in GROUP_VARIANTS[g]]
+    variant_to_group = {v: g for g, vs in GROUP_VARIANTS.items() for v in vs}
+    bar_colors       = [GROUP_COLORS[variant_to_group[v]] for v in all_variants]
+    x                = np.arange(len(all_variants))
+    short_labels     = [v.replace('cylindrical ', 'cyl\n')
+                         .replace('lateral ', 'lat\n')
+                         .replace('palm ', 'palm\n')
+                        for v in all_variants]
+
+    datasets = [
+        (metrics['hold_acc_per_subclass'],
+         f'Hold accuracy per sub-class  (n={N_SAMPLE_TRIALS} trials/variant, subsampled)'),
+        (metrics['transition_in_acc_per_subclass'],
+         f'Transition-in accuracy per sub-class  (n={N_SAMPLE_TRIALS} trials/variant, subsampled)'),
+        (metrics['transition_out_acc_per_subclass'],
+         f'Transition-out → rest accuracy per sub-class  (n={N_SAMPLE_TRIALS} trials/variant, subsampled)'),
+    ]
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+    for ax, (acc_dict, title) in zip(axes, datasets):
+        accs = [acc_dict.get(v, 0) for v in all_variants]
+        ax.bar(x, accs, color=bar_colors, alpha=0.85, edgecolor='white')
+        ax.set_xticks(x)
+        ax.set_xticklabels(short_labels, fontsize=8)
+        ax.set_ylabel('Raw accuracy')
+        ax.set_ylim(0, 1.05)
+        ax.set_title(title)
+        ax.axhline(0.5, color='gray', linestyle=':', alpha=0.5, label='chance')
+        for xi, acc in enumerate(accs):
+            ax.text(xi, acc + 0.02, f'{acc:.2f}', ha='center', va='bottom', fontsize=7)
+
+    legend_patches = [Patch(color=c, label=g) for g, c in GROUP_COLORS.items()]
+    axes[0].legend(handles=legend_patches, loc='lower right', fontsize=8)
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_group_accuracy(metrics, path):
+    '''Grouped bar chart: hold / transition-in / transition-out accuracy per gesture group.'''
+    phases = [
+        ('hold_acc_per_group',           'Hold'),
+        ('transition_in_acc_per_group',  'Transition-in'),
+        ('transition_out_acc_per_group', 'Transition-out → rest'),
+    ]
+    x     = np.arange(len(GROUPS_ORDERED))
+    width = 0.25
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for i, (key, label) in enumerate(phases):
+        acc_dict = metrics.get(key, {})
+        accs     = [acc_dict.get(g, 0) for g in GROUPS_ORDERED]
+        ax.bar(x + (i - 1) * width, accs, width, label=label, alpha=0.85)
+        for xi, acc in enumerate(accs):
+            ax.text(xi + (i - 1) * width, acc + 0.02, f'{acc:.2f}',
+                    ha='center', va='bottom', fontsize=8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(GROUPS_ORDERED)
+    ax.set_ylabel('Accuracy (mean of variant accuracies)')
+    ax.set_ylim(0, 1.15)
+    ax.set_title('Group accuracy by phase (mean of per-variant accuracies, all trials)')
+    ax.axhline(0.25, color='gray', linestyle=':', alpha=0.5, label='chance (1/4)')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_dynamic_accuracy(metrics, path):
+    '''Bar chart of per-position accuracy in dynamic mode, coloured by group.'''
+    GROUP_COLORS  = {'cylindrical': 'steelblue', 'lateral': 'darkorange', 'palm': 'seagreen'}
+    all_positions = [v for g in GROUPS_ORDERED for v in DYNAMIC_VARIANTS[g]]
+    pos_to_group  = {v: g for g, vs in DYNAMIC_VARIANTS.items() for v in vs}
+    acc_dict      = metrics.get('dynamic_acc_per_position', {})
+    accs          = [acc_dict.get(p, 0) for p in all_positions]
+    colors        = [GROUP_COLORS[pos_to_group[p]] for p in all_positions]
+    x             = np.arange(len(all_positions))
+    short_labels  = [p.replace('cylindrical ', 'cyl\n')
+                      .replace('lateral ', 'lat\n')
+                      .replace('palm ', 'palm\n')
+                     for p in all_positions]
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.bar(x, accs, color=colors, alpha=0.85, edgecolor='white')
+    ax.set_xticks(x)
+    ax.set_xticklabels(short_labels, fontsize=8)
+    ax.set_ylabel('Raw accuracy')
+    ax.set_ylim(0, 1.05)
+    ax.set_title('Dynamic mode — accuracy per position (raw)')
+    ax.axhline(0.5, color='gray', linestyle=':', alpha=0.5)
+    for xi, acc in enumerate(accs):
+        ax.text(xi, acc + 0.02, f'{acc:.2f}', ha='center', va='bottom', fontsize=7)
+    legend_patches = [Patch(color=c, label=g) for g, c in GROUP_COLORS.items()]
+    ax.legend(handles=legend_patches, loc='lower right', fontsize=8)
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_confusion_rest(metrics, path):
+    '''Bar chart of predicted class distribution during rest.'''
+    row    = metrics['confusion_row']
+    x      = np.arange(len(CLASSES))
+    colors = ['steelblue' if c == 'rest' else 'tomato' for c in CLASSES]
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.bar(x, row, color=colors, alpha=0.85, edgecolor='white')
+    ax.set_xticks(x)
+    ax.set_xticklabels(CLASSES)
+    ax.set_ylabel('Fraction of predictions')
+    ax.set_ylim(0, 1.1)
+    ax.set_title(
+        f'Predicted class distribution during rest\n'
+        f'raw accuracy: {metrics["rest_acc_raw"]:.3f}  '
+        f'smoothed: {metrics["rest_acc_smooth"]:.3f}'
+    )
+    for xi, v in enumerate(row):
+        ax.text(xi, v + 0.02, f'{v:.3f}', ha='center', va='bottom', fontsize=9)
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_per_trial_accuracy(metrics, path):
+    '''Line plot of rest accuracy per trial — reveals drift over time.'''
+    per_trial = metrics['per_trial_acc']
+    trials    = sorted(per_trial)
+    accs      = [per_trial[t] for t in trials]
+    mean_acc  = float(np.mean(accs))
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(trials, accs, marker='o', color='steelblue', markersize=5)
+    ax.axhline(mean_acc, color='tomato', linestyle='--',
+               label=f'mean = {mean_acc:.3f}')
+    ax.set_xlabel('Trial')
+    ax.set_ylabel('Rest accuracy (raw)')
+    ax.set_ylim(-0.05, 1.1)
+    ax.set_title('Rest accuracy per trial')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+def plot_timeline(records, path):
+    '''One row per gesture group — markers differ by phase, colour by correct/incorrect.'''
+    MARKERS   = {'transition_in': '^', 'hold': 'o', 'transition_out': 'v'}
+    row_defs  = [(g, GROUP_TO_INT[g]) for g in GROUPS_ORDERED] + [('rest (tr-out)', REST_IDX)]
+
+    fig, axes = plt.subplots(len(row_defs), 1, figsize=(14, 6), sharex=False)
+    for ax, (label, cls_idx) in zip(axes, row_defs):
+        recs = [r for r in records if r['true'] == cls_idx]
+        ax.set_ylabel(label, rotation=0, labelpad=70, va='center', fontsize=9)
+        ax.set_yticks([])
+        ax.set_ylim(0.5, 1.5)
+        if not recs:
+            continue
+        for phase, marker in MARKERS.items():
+            ph_recs = [r for r in recs if r['phase'] == phase]
+            if not ph_recs:
+                continue
+            ts      = np.array([r['t']        for r in ph_recs])
+            correct = np.array([r['raw_pred'] for r in ph_recs]) == cls_idx
+            if correct.any():
+                ax.scatter(ts[correct],  np.ones(correct.sum()),
+                           color='steelblue', s=12, marker=marker)
+            if (~correct).any():
+                ax.scatter(ts[~correct], np.ones((~correct).sum()),
+                           color='tomato',    s=12, marker=marker)
+        ax.set_xlim(0, max(r['t'] for r in recs) + 0.2)
+        ax.set_xlabel('Time within phase (s)', fontsize=8)
+
+    axes[0].set_title(
+        'Prediction timeline  ▲=transition_in  ●=hold  ▼=transition_out  '
+        'blue=correct  red=incorrect'
+    )
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f'  Saved {path}')
+
+
+# ── Incremental save ──────────────────────────────────────────────────────────
+
+def _write_csv(records, out_dir):
+    '''Write all records to predictions.csv (overwrites). Returns path.'''
+    csv_path = os.path.join(out_dir, 'predictions.csv')
+    with open(csv_path, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['t', 'trial', 'phase', 'sub_class', 'true_group', 'raw_pred',
+                    'smoothed_pred', 'conf_cyl', 'conf_lat', 'conf_palm', 'conf_rest',
+                    'infer_ms', 'mav_max'])
+        for r in records:
+            w.writerow([
+                f'{r["t"]:.4f}',
+                r['trial'],
+                r['phase'],
+                r['sub_class'],
+                CLASSES[r['true']],
+                CLASSES[r['raw_pred']],
+                CLASSES[r['smoothed_pred']],
+                *[f'{p:.4f}' for p in r['proba']],
+                f'{r["infer_ms"]:.2f}',
+                f'{r.get("mav_max", ""):.4f}' if r.get("mav_max") is not None else '',
+            ])
+    return csv_path
+
+
+def _write_amp_csv(amp_samples, out_dir):
+    '''Append per-sample amplitude rows to emg_amplitude.csv (for onset detection).'''
+    csv_path = os.path.join(out_dir, 'emg_amplitude.csv')
+    write_header = not os.path.exists(csv_path)
+    with open(csv_path, 'a', newline='') as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(['trial', 'phase', 't', 'peak'])
+        for s in amp_samples:
+            w.writerow([s['trial'], s['phase'], f'{s["t"]:.5f}', f'{s["peak"]:.5f}'])
+
+
+def _save_incremental(records, amp_samples, out_dir):
+    '''Write CSV + partial JSON after each trial (no plots, silent).'''
+    _write_csv(records, out_dir)
+    _write_amp_csv(amp_samples, out_dir)
+    if records:
+        json_path = os.path.join(out_dir, 'results.json')
+        with open(json_path, 'w') as f:
+            json.dump(compute_metrics(records), f, indent=2)
+
+
+# ── Save ──────────────────────────────────────────────────────────────────────
+
+def save_all(records, metrics, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = _write_csv(records, out_dir)
+    print(f'  Saved {csv_path}')
+
+    json_path = os.path.join(out_dir, 'results.json')
+    with open(json_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f'  Saved {json_path}')
+
+    hold_m = metrics.get('hold') or {}
+    if hold_m.get('raw_cm'):
+        plot_confusion_matrix(hold_m['raw_cm'],
+                              'Confusion matrix — raw predictions (hold phase)',
+                              os.path.join(out_dir, 'confusion_matrix_raw.png'),
+                              display_labels=hold_m.get('target_names'))
+    if hold_m.get('smoothed_cm'):
+        plot_confusion_matrix(hold_m['smoothed_cm'],
+                              f'Confusion matrix — smoothed (n={SMOOTH_N}, hold phase)',
+                              os.path.join(out_dir, 'confusion_matrix_smoothed.png'),
+                              display_labels=hold_m.get('target_names'))
+
+    plot_confidence_histogram(records,  os.path.join(out_dir, 'confidence_histogram.png'))
+    plot_group_accuracy(metrics,        os.path.join(out_dir, 'group_accuracy.png'))
+    plot_subclass_accuracy(metrics,     os.path.join(out_dir, 'subclass_accuracy.png'))
+    plot_timeline(records,              os.path.join(out_dir, 'timeline.png'))
+
+
+# ── Save (dynamic) ────────────────────────────────────────────────────────────
+
+def save_dynamic(records, metrics, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = _write_csv(records, out_dir)
+    print(f'  Saved {csv_path}')
+
+    json_path = os.path.join(out_dir, 'results.json')
+    with open(json_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f'  Saved {json_path}')
+
+    if metrics.get('raw_cm'):
+        plot_confusion_matrix(metrics['raw_cm'],
+                              'Confusion matrix — dynamic mode (raw)',
+                              os.path.join(out_dir, 'confusion_matrix_dynamic.png'))
+    plot_dynamic_accuracy(metrics, os.path.join(out_dir, 'dynamic_accuracy.png'))
+
+
+# ── Save (rest) ───────────────────────────────────────────────────────────────
+
+def _save_rest_incremental(records, amp_samples, out_dir):
+    '''Write CSV + partial JSON after each rest trial (no plots, silent).'''
+    _write_csv(records, out_dir)
+    _write_amp_csv(amp_samples, out_dir)
+    if records:
+        json_path = os.path.join(out_dir, 'results.json')
+        with open(json_path, 'w') as f:
+            json.dump(compute_rest_metrics(records), f, indent=2)
+
+
+def save_rest(records, metrics, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+
+    csv_path = _write_csv(records, out_dir)
+    print(f'  Saved {csv_path}')
+
+    json_path = os.path.join(out_dir, 'results.json')
+    with open(json_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f'  Saved {json_path}')
+
+    plot_confusion_rest(metrics,     os.path.join(out_dir, 'confusion_rest.png'))
+    plot_per_trial_accuracy(metrics, os.path.join(out_dir, 'accuracy_per_trial.png'))
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description='Real-time BPNN evaluation')
+    parser.add_argument('--mode', choices=['static', 'dynamic', 'rest'], default='static',
+                        help='static: trial schedule with hold phases; '
+                             'dynamic: continuous position sweep; '
+                             'rest: 30 rest trials measuring false-activation rate')
+    parser.add_argument('--hold', type=int, default=HOLD_SEC,
+                        help='Hold duration in seconds (static mode)')
+    parser.add_argument('--rest', type=int, default=REST_GAP_SEC,
+                        help='Rest gap between trials/sweeps in seconds')
+    parser.add_argument('--results', default=None,
+                        help='Path to training results folder containing model.pt '
+                             '(default: latest timestamped run under results_bpnn/)')
+    args = parser.parse_args()
+
+    if args.results:
+        results_dir = args.results
+    else:
+        base = RESULTS_DIR  # 'results_bpnn'
+        if os.path.isdir(base):
+            runs = sorted(d for d in os.listdir(base)
+                          if os.path.isdir(os.path.join(base, d)))
+            results_dir = os.path.join(base, runs[-1]) if runs else base
+        else:
+            results_dir = base
+    print(f'Results dir : {results_dir}')
+
+    print(f'Device : {DEVICE}')
+    print('Loading model and scaler...')
+    with open(os.path.join(results_dir, 'results.json')) as f:
+        meta = json.load(f)
+    dropout = meta.get('best_config', {}).get('dropout', 0.0)
+
+    model = BPNN(dropout=dropout).to(DEVICE)
+    model.load_state_dict(
+        torch.load(os.path.join(results_dir, 'model.pt'), map_location=DEVICE)
+    )
+    model.eval()
+    scaler = joblib.load(os.path.join(results_dir, 'scaler.joblib'))
+    print(f'  Architecture : {meta.get("architecture", "48→128→4")}')
+    print(f'  Config       : {meta.get("best_config")}')
+
+    myo_thread = threading.Thread(target=_myo_worker, daemon=True)
+    myo_thread.start()
+    print('Connecting to Myo (vibration confirms)...')
+    time.sleep(1.5)
+
+    print('\n── Calibration ───────────────────────────────────────')
+    scale = calibrate()
+
+    # ── Dynamic mode ──────────────────────────────────────────────────────────
+    if args.mode == 'dynamic':
+        dyn_schedule = build_dynamic_schedule()
+        total_pos    = sum(len(ps) for _, ps in dyn_schedule)
+        total_sec    = sum(args.rest + len(ps) * DYNAMIC_SEC for _, ps in dyn_schedule)
+
+        print(f'\n── Dynamic session plan ──────────────────────────────')
+        for group, positions in dyn_schedule:
+            print(f'  {group}: {len(positions)} positions × {DYNAMIC_SEC}s each')
+            for p in positions:
+                print(f'    {p}')
+        print(f'  Total positions : {total_pos}')
+        print(f'  Total time      : ~{total_sec:.0f}s ({int(total_sec)//60}m {int(total_sec)%60}s)')
+        input('\n  Press Enter to begin...')
+
+        all_records  = []
+        all_amp      = []
+
+        try:
+            for group, positions in dyn_schedule:
+                cls_idx = GROUP_TO_INT[group]
+                rest_gap(args.rest, f'{group} dynamic sweep')
+                print(f'\n  ── {group.upper()} DYNAMIC SWEEP ──────────────────────────')
+                short_seq = ' → '.join(p.split(group + ' ', 1)[-1] for p in positions)
+                print(f'  Sequence: {short_seq}')
+                for i, pos in enumerate(positions):
+                    if i > 0:
+                        countdown(f'→ {pos.upper()}', 2)
+                    else:
+                        print(f'  START: {pos.upper()}', flush=True)
+                    recs, amps = record_phase(model, scaler, scale,
+                                             cls_idx, pos, DYNAMIC_SEC, 'dynamic')
+                    all_records.extend(recs)
+                    all_amp.extend(amps)
+                    _phase_summary(recs, cls_idx, pos)
+
+        except KeyboardInterrupt:
+            print('\n  Interrupted — saving partial results...')
+        finally:
+            _stop_event.set()
+            myo_thread.join(timeout=3)
+
+        if not all_records:
+            print('No predictions recorded.')
+            return
+
+        print('\n── Dynamic results ───────────────────────────────────')
+        metrics = compute_dynamic_metrics(all_records)
+        print(f'  Raw balanced acc.   : {metrics["raw_balanced_acc"]:.3f}')
+        print(f'  Mean inference time : {metrics["mean_infer_ms"]:.1f} ± {metrics["std_infer_ms"]:.1f} ms')
+        print(f'  Total predictions   : {metrics["n_predictions"]}')
+        print()
+        print(f'  {"position":<42}  {"acc":>5}')
+        print('  ' + '─' * 52)
+        for group in GROUPS_ORDERED:
+            for pos in DYNAMIC_VARIANTS[group]:
+                acc = metrics['dynamic_acc_per_position'].get(pos, float('nan'))
+                print(f'  {pos:<42}  {acc:>5.3f}')
+            print()
+
+        out_dir = os.path.join('inference_eval_bpnn',
+                               datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_dynamic')
+        print(f'\n── Saving to {out_dir}/ ──────────────────────────────')
+        save_dynamic(all_records, metrics, out_dir)
+        _write_amp_csv(all_amp, out_dir)
+        print('\nDone.')
+        return
+
+    # ── Rest mode ─────────────────────────────────────────────────────────────
+    if args.mode == 'rest':
+        total_sec = REST_TRIALS * (args.rest + args.hold)
+        print(f'\n── Rest session plan ─────────────────────────────────')
+        print(f'  Trials      : {REST_TRIALS}')
+        print(f'  Hold per trial : {args.hold}s')
+        print(f'  Rest gap    : {args.rest}s')
+        print(f'  Total time  : ~{total_sec}s ({total_sec // 60}m {total_sec % 60}s)')
+        input('\n  Press Enter to begin...')
+
+        out_dir = os.path.join('inference_eval_bpnn',
+                               datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_rest')
+        os.makedirs(out_dir, exist_ok=True)
+        print(f'  Output → {out_dir}/')
+
+        all_records = []
+        all_amp     = []
+        idx = 0
+
+        try:
+            while idx < REST_TRIALS:
+                trial_num = idx + 1
+                rest_gap(args.rest, 'REST')
+                print(f'\n  [{trial_num:>2}/{REST_TRIALS}] REST — stay relaxed')
+
+                recs, amps = record_phase(model, scaler, scale,
+                                          REST_IDX, 'rest', args.hold, 'rest',
+                                          trial_num=trial_num)
+                _phase_summary(recs, REST_IDX, 'rest')
+
+                all_records.extend(recs)
+                all_amp.extend(amps)
+                _save_rest_incremental(all_records, all_amp, out_dir)
+
+                action = _post_trial_action()
+                if action == 'pause':
+                    print('\n  ── PAUSED ──────────────────────────────────────────')
+                    resp = input('  [Enter] resume  [r] redo this trial : ').strip().lower()
+                    action = 'redo' if resp == 'r' else 'continue'
+
+                if action == 'redo':
+                    all_records = [r for r in all_records if r['trial'] != trial_num]
+                    all_amp     = [s for s in all_amp     if s['trial'] != trial_num]
+                    _save_rest_incremental(all_records, all_amp, out_dir)
+                    print(f'  ↺ Redoing trial {trial_num}...')
+                else:
+                    idx += 1
+
+        except KeyboardInterrupt:
+            print('\n  Interrupted — results saved to disk.')
+        finally:
+            _stop_event.set()
+            myo_thread.join(timeout=3)
+
+        if not all_records:
+            print('No predictions recorded.')
+            return
+
+        print('\n── Rest results ──────────────────────────────────────')
+        metrics = compute_rest_metrics(all_records)
+        print(f'  Rest accuracy (raw)     : {metrics["rest_acc_raw"]:.3f}')
+        print(f'  Rest accuracy (smoothed): {metrics["rest_acc_smooth"]:.3f}')
+        print(f'  Mean inference time     : {metrics["mean_infer_ms"]:.1f} ± {metrics["std_infer_ms"]:.1f} ms')
+        print(f'  Total predictions       : {metrics["n_predictions"]}  ({metrics["n_trials"]} trials)')
+        print()
+        print('  Predicted class distribution:')
+        for cls, count in metrics['pred_distribution'].items():
+            pct = count / metrics['n_predictions'] * 100 if metrics['n_predictions'] else 0
+            bar = '#' * int(pct / 2)
+            print(f'    {cls:<12}  {count:>4}  ({pct:>5.1f}%)  {bar}')
+
+        print(f'\n── Saving final results to {out_dir}/ ───────────────')
+        save_rest(all_records, metrics, out_dir)
+        print('\nDone.')
+        return
+
+    # ── Static mode ───────────────────────────────────────────────────────────
+    schedule  = build_trial_schedule()
+    trial_sec = TRANSITION_SEC + args.hold + TRANSITION_SEC
+    total_sec = len(schedule) * (args.rest + trial_sec)
+
+    print(f'\n── Session plan ──────────────────────────────────────')
+    for group in GROUPS_ORDERED:
+        variants = GROUP_VARIANTS[group]
+        base, rem = divmod(TRIALS_PER_GROUP, len(variants))
+        counts = [base + (1 if i < rem else 0) for i in range(len(variants))]
+        print(f'  {group} ({TRIALS_PER_GROUP} trials):')
+        for v, c in zip(variants, counts):
+            print(f'    {v:<36} {c} trials')
+    print(f'  Total trials : {len(schedule)}')
+    print(f'  Per trial    : {TRANSITION_SEC}s in + {args.hold}s hold + {TRANSITION_SEC}s out')
+    print(f'  Between      : {args.rest}s rest gap')
+    print(f'  Total time   : ~{total_sec}s ({total_sec // 60}m {total_sec % 60}s)')
+    input('\n  Press Enter to begin...')
+
+    out_dir = os.path.join('inference_eval_bpnn',
+                           datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    os.makedirs(out_dir, exist_ok=True)
+    print(f'  Output → {out_dir}/')
+
+    all_records = []
+    all_amp     = []
+    idx = 0
+
+    try:
+        while idx < len(schedule):
+            trial_num      = idx + 1
+            sub_cls, group = schedule[idx]
+            cls_idx        = GROUP_TO_INT[group]
+
+            rest_gap(args.rest, sub_cls)
+            print(f'\n  [{trial_num:>2}/{len(schedule)}] {sub_cls.upper()}  ({group})')
+
+            print(f'  TRANSITION IN', flush=True)
+            tr_in, amps_in = record_phase(model, scaler, scale,
+                                          cls_idx, sub_cls, TRANSITION_SEC, 'transition_in',
+                                          trial_num=trial_num)
+            _phase_summary(tr_in, cls_idx, 'transition in')
+
+            print(f'  HOLD', flush=True)
+            hold, amps_hold = record_phase(model, scaler, scale,
+                                           cls_idx, sub_cls, args.hold, 'hold',
+                                           trial_num=trial_num)
+            _phase_summary(hold, cls_idx, 'hold')
+
+            print(f'  RELEASE back to rest', flush=True)
+            tr_out, amps_out = record_phase(model, scaler, scale,
+                                            REST_IDX, sub_cls, TRANSITION_SEC, 'transition_out',
+                                            trial_num=trial_num)
+            _phase_summary(tr_out, REST_IDX, 'transition out')
+
+            trial_recs = tr_in + hold + tr_out
+            trial_amps = amps_in + amps_hold + amps_out
+            all_records.extend(trial_recs)
+            all_amp.extend(trial_amps)
+            _save_incremental(all_records, all_amp, out_dir)
+
+            action = _post_trial_action()
+            if action == 'pause':
+                print('\n  ── PAUSED ──────────────────────────────────────────')
+                resp = input('  [Enter] resume  [r] redo this trial : ').strip().lower()
+                action = 'redo' if resp == 'r' else 'continue'
+
+            if action == 'redo':
+                all_records = [r for r in all_records if r['trial'] != trial_num]
+                all_amp     = [s for s in all_amp     if s['trial'] != trial_num]
+                _save_incremental(all_records, all_amp, out_dir)
+                print(f'  ↺ Redoing trial {trial_num} ({sub_cls})...')
+            else:
+                idx += 1
+
+    except KeyboardInterrupt:
+        print('\n  Interrupted — results saved to disk.')
+    finally:
+        _stop_event.set()
+        myo_thread.join(timeout=3)
+
+    if not all_records:
+        print('No predictions recorded.')
+        return
+
+    print('\n── Results ───────────────────────────────────────────')
+    metrics = compute_metrics(all_records)
+
+    hold_m = metrics.get('hold') or {}
+    print(f'  Hold raw balanced acc.      : {hold_m.get("raw_balanced_acc", 0):.3f}')
+    print(f'  Hold smoothed balanced acc. : {hold_m.get("smoothed_balanced_acc", 0):.3f}')
+    print(f'  Mean inference time         : {metrics["mean_infer_ms"]:.1f} ± {metrics["std_infer_ms"]:.1f} ms')
+    print(f'  Total predictions           : {metrics["n_predictions"]}')
+    print()
+    print(f'  Sub-class accuracy  (n≤{N_SAMPLE_TRIALS} trials/variant sampled)')
+    print(f'  {"sub-class":<36}  {"hold":>6}  {"tr-in":>6}  {"tr-out":>7}  {"trials":>6}')
+    print('  ' + '─' * 70)
+    for group in GROUPS_ORDERED:
+        for variant in GROUP_VARIANTS[group]:
+            n_trials = len({r['trial'] for r in all_records
+                            if r['sub_class'] == variant and r['phase'] == 'hold'})
+            h  = metrics['hold_acc_per_subclass'].get(variant, float('nan'))
+            ti = metrics['transition_in_acc_per_subclass'].get(variant, float('nan'))
+            to = metrics['transition_out_acc_per_subclass'].get(variant, float('nan'))
+            print(f'  {variant:<36}  {h:>6.3f}  {ti:>6.3f}  {to:>7.3f}  {n_trials:>6}')
+        print()
+
+    tr_out_overall = metrics.get('transition_out_rest_acc')
+    if tr_out_overall is not None:
+        print(f'  Overall transition-out → rest : {tr_out_overall:.3f}')
+
+    print()
+    print(f'  {"group":<14}  {"hold":>6}  {"tr-in":>6}  {"tr-out":>7}  (mean of variant accs)')
+    print('  ' + '─' * 50)
+    for group in GROUPS_ORDERED:
+        h  = metrics['hold_acc_per_group'].get(group, float('nan'))
+        ti = metrics['transition_in_acc_per_group'].get(group, float('nan'))
+        to = metrics['transition_out_acc_per_group'].get(group, float('nan'))
+        print(f'  {group:<14}  {h:>6.3f}  {ti:>6.3f}  {to:>7.3f}')
+    print()
+
+    print(f'\n── Saving final results to {out_dir}/ ───────────────')
+    save_all(all_records, metrics, out_dir)
+    _write_amp_csv(all_amp, out_dir)
+    print('\nDone.')
+
+
+if __name__ == '__main__':
+    main()

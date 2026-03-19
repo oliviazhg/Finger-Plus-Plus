@@ -1,0 +1,5 @@
+mosquitto -c /opt/homebrew/etc/mosquitto/mosquitto.conf
+ls -la /dev/cu.*
+ls -la /dev/tty.*
+
+source venv/bin/activate
