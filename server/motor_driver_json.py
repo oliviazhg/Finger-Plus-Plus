@@ -17,8 +17,8 @@ TOPIC_TELEMETRY = "motor/telemetry"
 # motor config
 DXL_ID_1 = 1
 DXL_ID_2 = 2
-BAUDRATE = 1000000
-DEVICENAME = 'COM7'
+BAUDRATE = 115200
+DEVICENAME = os.getenv("DEVICE_NAME", "COM7")
 PROTOCOL_VERSION = 2.0
 
 ADDR_OPERATING_MODE = 11
@@ -113,11 +113,11 @@ def on_message(client, userdata, msg):
 
         # define physical bounds
         if target_id == 1:
-            if target_position < 3000: target_position = 3000
-            if target_position > 4300: target_position = 4300
+            if target_position < 0: target_position = 0
+            if target_position > 1600: target_position = 1600
         if target_id == 2:
-            if target_position < 3000: target_position = 3000
-            if target_position > 6900: target_position = 6900
+            if target_position < 2100: target_position = 2100
+            if target_position > 5800: target_position = 5800
 
         move_motor(target_id, target_position)
         

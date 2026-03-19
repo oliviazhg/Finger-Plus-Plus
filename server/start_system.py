@@ -8,25 +8,30 @@ def main():
 
     try:
         # Start Motor Driver
-        print("Starting Motor Driver...")
-        p_motor = subprocess.Popen([sys.executable, "motor_driver_json.py"])
-        processes.append(p_motor)
-        time.sleep(2)
+        # print("Starting Motor Driver...")
+        # p_motor = subprocess.Popen([sys.executable, "motor_driver_json.py"])
+        # processes.append(p_motor)
+        # time.sleep(2)
 
         # Start FSR Controller (comm_bridge)
         print("Starting ESP32 Sensor Bridge...")
         p_fsr = subprocess.Popen([sys.executable, "comm_bridge.py"])
         processes.append(p_fsr)
 
-        # Start Myo Controller
-        print("Starting Myo Controller...")
-        p_myo = subprocess.Popen([sys.executable, "myo_controller.py"])
-        processes.append(p_myo)
-
         # Start Backend
         print("Starting Server...")
         p_ui = subprocess.Popen([sys.executable, "finger_data.py"]) 
         processes.append(p_ui)
+
+        # Start Classification Model
+        print("Starting Classification Model...")
+        p_inference = subprocess.Popen([sys.executable, "run_inference.py"])
+        processes.append(p_inference)
+
+        # Start Myo Controller
+        print("Starting Myo Controller...")
+        p_myo = subprocess.Popen([sys.executable, "myo_controller.py"])
+        processes.append(p_myo)
 
         print("\nSYSTEM RUNNING")
         print("Ctrl+C to stop everything.\n")

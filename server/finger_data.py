@@ -15,7 +15,9 @@ MQTT_TOPIC  = "motor/command"
 TOPIC_MYO_STATE = "sensor/myo/state"
 TOPIC_LOGS = "system/logs"
 TOPIC_TELEMETRY = "motor/telemetry"
-TOPIC_HARDWARE_SENSORS = "sensor/hardware_telemetry"
+TOPIC_HARDWARE_SENSORS = "sensor/hardware_telemetry" # Right Toe ESP32
+TOPIC_HARDWARE_SENSORS_LEFT = "sensor/hardware_telemetry_left" # Left Toe ESP32
+TOPIC_TELEMETRY_FINGER = "sensor/hardware_telemetry1" # Finger ESP32
 TOPIC_SYS_MODE = "system/control_mode"
 
 current_sys_mode = "ui"
@@ -58,21 +60,42 @@ def on_mqtt_message(client, userdata, msg):
     elif msg.topic == TOPIC_HARDWARE_SENSORS:
         try:
             data = json.loads(msg.payload.decode())
+            if "toe_m1" in data:
+                live_toe_fsr[0] = data["toe_m1"]
+        except json.JSONDecodeError:
+            pass
+            
+    elif msg.topic == TOPIC_HARDWARE_SENSORS_LEFT:
+        try:
+            data = json.loads(msg.payload.decode())
+            if "toe_m2" in data:
+                live_toe_fsr[1] = data["toe_m2"]
+        except json.JSONDecodeError:
+            pass
+    elif msg.topic == TOPIC_TELEMETRY_FINGER:
+        try:
+            data = json.loads(msg.payload.decode())
             if "fsr" in data:
                 live_fsr = data["fsr"]
             if "imu" in data:
                 live_imu = data["imu"]
-            if "toe_fsr" in data:
-                live_toe_fsr = data["toe_fsr"]
         except json.JSONDecodeError:
             pass
-    # elif msg.topic == TOPIC_SYS_MODE:
-    #     current_sys_mode = msg.payload.decode()
+    elif msg.topic == TOPIC_SYS_MODE:
+        current_sys_mode = msg.payload.decode()
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_message = on_mqtt_message
 mqtt_client.connect(MQTT_BROKER, 1883, 60)
-mqtt_client.subscribe([(TOPIC_MYO_STATE, 0), (TOPIC_LOGS, 0), (TOPIC_TELEMETRY, 0), (TOPIC_HARDWARE_SENSORS, 0), (TOPIC_SYS_MODE, 0)])
+mqtt_client.subscribe([
+    (TOPIC_MYO_STATE, 0),
+    (TOPIC_LOGS, 0),
+    (TOPIC_TELEMETRY, 0),
+    (TOPIC_HARDWARE_SENSORS, 0),
+    (TOPIC_HARDWARE_SENSORS_LEFT, 0),
+    (TOPIC_SYS_MODE, 0),
+    (TOPIC_TELEMETRY_FINGER, 0)
+])
 mqtt_client.loop_start()
 
 async def handle_connection(websocket):
@@ -82,11 +105,11 @@ async def handle_connection(websocket):
         global current_myo_state, system_logs, live_m1_pos, live_m2_pos, live_fsr, live_imu
         try:
             while True:
-                # Motor 1: Resting at 150 (0.0), Sweep to -1100 (1.0)
-                base_sweep_factor = map_range(live_m1_pos, 4300, 3000, 0.0, 1.0)
+                # Motor 1: Resting at 1600 (0.0), Sweep to 0 (1.0)
+                base_sweep_factor = map_range(live_m1_pos, 1600, 0, 0.0, 1.0)
                 
-                # Motor 2: Resting at 4000 (0.0), Curl to 8400 (1.0)
-                curl_factor = map_range(live_m2_pos, 3000, 6900, 0.0, 1.0)
+                # Motor 2: Resting at 2300 (0.0), Curl to 6500 (1.0)
+                curl_factor = map_range(live_m2_pos, 2100, 5800, 0.0, 1.0)
 
                 payload = {
                     "angles": {
@@ -97,14 +120,14 @@ async def handle_connection(websocket):
                     },
                     "sensors": {
                         "fsr": live_fsr,
-                        "imu": [curl_factor * 0.45, curl_factor * 0.9, curl_factor * 0.8],
+                        "imu": [0,0,0],
                         "toe_fsr": live_toe_fsr,
                         "motors": [live_m1_pos, live_m2_pos]
                     },
                     "myo": {
                         "state": current_myo_state
                     },
-                    # "system": { "mode": current_sys_mode },
+                    "system": { "mode": current_sys_mode },
                     "logs": system_logs,
                     "timestamp": int(time.time() * 1000)
                 }
@@ -130,12 +153,11 @@ async def handle_connection(websocket):
                     mqtt_payload = {}
 
                     if action == "start":
-                        # Forward = Max Position, Backward = Min Position
                         target_pos = 0
                         if motor_id == 1:
-                            target_pos = 3000 if direction == "forward" else 4300
+                            target_pos = 1600 if direction == "forward" else 0
                         elif motor_id == 2:
-                            target_pos = 6900 if direction == "forward" else 3000
+                            target_pos = 5800 if direction == "forward" else 2100
 
                         mqtt_payload = {
                             "id": motor_id, 

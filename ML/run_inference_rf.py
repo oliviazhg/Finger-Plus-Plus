@@ -25,6 +25,20 @@ import warnings
 import numpy as np
 import joblib
 from collections import deque
+import paho.mqtt.client as mqtt
+import json
+import os
+
+MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
+MQTT_PORT   = int(os.getenv("MQTT_PORT", 1883))
+TOPIC_MYO_STATE = "sensor/myo/state"
+
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+try:
+    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    mqtt_client.loop_start()
+except Exception as e:
+    print(f"Warning: MQTT not connected in run_inference.py: {e}")
 
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
@@ -141,6 +155,8 @@ def main():
     candidate_class    = CLASSES[0]   # class being evaluated
     candidate_since    = time.monotonic()
 
+    last_published_class = None
+
     try:
         while True:
             try:
@@ -168,13 +184,16 @@ def main():
             smoothed_label = CLASSES[smoothed]
             last_proba     = proba
 
-            # Dwell-time filter: only commit when candidate holds for DWELL_TIME
             now = time.monotonic()
             if smoothed_label != candidate_class:
                 candidate_class = smoothed_label
                 candidate_since = now
             elif now - candidate_since >= DWELL_TIME:
                 committed_class = candidate_class
+
+            if committed_class != last_published_class:
+                mqtt_client.publish(TOPIC_MYO_STATE, committed_class)
+                last_published_class = committed_class
 
             if now - last_display >= DISPLAY_INTERVAL:
                 last_display = now
@@ -191,6 +210,8 @@ def main():
         pass
     finally:
         _stop_event.set()
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
         print('\nDisconnecting...')
         myo_thread.join(timeout=3)
         print('Done.')
