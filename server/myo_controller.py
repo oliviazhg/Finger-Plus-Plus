@@ -30,13 +30,13 @@ def on_message(client, userdata, msg):
             
             # --- MAP ML CLASSES TO MOTOR ANGLES ---
             if predicted_class == "rest":
-                m1, m2 = 4300, 4000
+                m1, m2 = 1020, 2950
             elif predicted_class == "palm":
-                m1, m2 = 3500, 4000
+                m1, m2 = 505, 2950
             elif predicted_class == "cylindrical":
-                m1, m2 = 3000, 6400
+                m1, m2 = 480, 4650
             elif predicted_class == "lateral":
-                m1, m2 = 3500, 5000
+                m1, m2 = 700, 5000
             else:
                 return
 

@@ -225,7 +225,7 @@ export default function DataSidebar({ data }) {
             </div>
           </div>
 
-          <div>
+          {/* <div>
             <div
               style={{
                 fontSize: "10px",
@@ -253,7 +253,7 @@ export default function DataSidebar({ data }) {
                 </div>
               </div>
             </div>
-          </div>
+          </div> */}
         </div>
       </section>
 
