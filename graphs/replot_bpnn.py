@@ -55,8 +55,8 @@ if 'torch' not in sys.modules:
         sys.modules['torch.nn'] = MagicMock()
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_SERVER_DIR = os.path.join(_SCRIPT_DIR, '..', 'server')
-sys.path.insert(0, os.path.abspath(_SERVER_DIR))
+_ML_DIR = os.path.join(_SCRIPT_DIR, '..', 'ML')
+sys.path.insert(0, os.path.abspath(_ML_DIR))
 
 import warnings
 warnings.filterwarnings('ignore', message='.*single label.*')
