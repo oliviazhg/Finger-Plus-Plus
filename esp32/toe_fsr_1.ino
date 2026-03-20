@@ -35,6 +35,8 @@ bool isHeelPressing = false;
 
 // --- Wiretap Tracker for Left Toe (Raw FSR 2) ---
 int latest_fsr2_raw = 0;
+unsigned long lastFsr2UpdateMs = 0;
+#define FSR2_STALE_MS 500   // zero out left toe if no update received for 500ms
 
 unsigned long lastLoopMs = 0;
 
@@ -55,7 +57,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     
     // Check if it parsed successfully and grab the raw FSR value
     if (!error && doc.containsKey("toe_m2")) {
-      latest_fsr2_raw = doc["toe_m2"];
+      latest_fsr2_raw    = doc["toe_m2"];
+      lastFsr2UpdateMs   = millis();
     }
   }
 }
@@ -88,11 +91,14 @@ void reconnect() {
 
 void loop() {
   if (!client.connected()) reconnect();
-  client.loop();
+  client.loop();   // called every iteration so incoming messages are never delayed
 
   unsigned long now = millis();
   if (now - lastLoopMs < 100) return;
   lastLoopMs = now;
+
+  // Zero out stale left-toe value if left ESP32 has gone silent
+  if (now - lastFsr2UpdateMs > FSR2_STALE_MS) latest_fsr2_raw = 0;
 
   emaHeel = EMA_ALPHA * analogRead(PIN_HEEL_FSR) + (1.0f - EMA_ALPHA) * emaHeel;
   emaM1   = EMA_ALPHA * analogRead(PIN_TOE_FSR_M1) + (1.0f - EMA_ALPHA) * emaM1;

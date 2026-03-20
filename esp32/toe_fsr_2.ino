@@ -65,10 +65,10 @@ void reconnect() {
 
 void loop() {
   if (!client.connected()) reconnect();
-  client.loop();
+  client.loop();   // called every iteration so incoming messages are never delayed
 
   unsigned long now = millis();
-  if (now - lastLoopMs < 200) return;
+  if (now - lastLoopMs < 100) return;   // match right ESP32 rate (was 200ms)
   lastLoopMs = now;
 
   emaM2 = EMA_ALPHA * analogRead(PIN_TOE_FSR_M2) + (1.0f - EMA_ALPHA) * emaM2;
