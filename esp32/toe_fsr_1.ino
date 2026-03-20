@@ -9,12 +9,12 @@ const char* mqtt_server = "172.20.10.11";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-const int PIN_HEEL_FSR   = A0;
-const int PIN_TOE_FSR_M1 = A1;
+const int PIN_HEEL_FSR   = A2;
+const int PIN_TOE_FSR_M1 = A0;
 
 #define HEEL_ENTRY_THRESHOLD  3050
 #define HEEL_HOLD_MS          3000  // Require 3 seconds (3000ms) to activate
-#define M1_BASELINE           400   // The resting value of the M1 FSR to zero out
+#define M1_BASELINE           0   // The resting value of the M1 FSR to zero out
 
 #define FSR1_IDLE_THRESHOLD   50    // FSR 1 rests at 0 (after baseline subtraction)
 #define FSR2_IDLE_THRESHOLD   100   // FSR 2 raw value threshold
@@ -167,12 +167,13 @@ void loop() {
     }
   }
 
-  StaticJsonDocument<128> doc;
+  StaticJsonDocument<192> doc;
   doc["heel_fsr"] = rawHeel;
   doc["toe_m1"]   = zeroedM1;
   doc["ind_mode"] = (heelState == HEEL_ACTIVE);
+  doc["toe_m2"]   = latest_fsr2_raw;
 
-  char telBuf[128];
+  char telBuf[192];
   serializeJson(doc, telBuf);
   client.publish(TOPIC_TELEMETRY, telBuf);
 

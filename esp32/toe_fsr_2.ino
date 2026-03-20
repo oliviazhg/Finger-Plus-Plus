@@ -68,7 +68,7 @@ void loop() {
   client.loop();
 
   unsigned long now = millis();
-  if (now - lastLoopMs < 100) return;
+  if (now - lastLoopMs < 200) return;
   lastLoopMs = now;
 
   emaM2 = EMA_ALPHA * analogRead(PIN_TOE_FSR_M2) + (1.0f - EMA_ALPHA) * emaM2;
@@ -83,8 +83,8 @@ void loop() {
   client.publish(TOPIC_TELEMETRY, telBuf);
 
   if (indModeActive) {
-    int targetM2 = map(rawM2, 0, 3000, 2800, 6100);
-    targetM2 = constrain(targetM2, 2800, 6100);
+    int targetM2 = map(rawM2, 0, 3000, 2000, 5000);
+    targetM2 = constrain(targetM2, 2000, 5000);
 
     StaticJsonDocument<64> m2Doc;
     m2Doc["value"]  = targetM2;
