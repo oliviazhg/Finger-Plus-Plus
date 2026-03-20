@@ -34,6 +34,10 @@ import warnings
 import numpy as np
 import joblib
 from collections import deque
+import os
+import json
+import paho.mqtt.client as mqtt
+from dotenv import load_dotenv
 
 try:
     import paho.mqtt.client as mqtt
@@ -58,13 +62,13 @@ WINDOW_SIZE      = 40        # 200ms at 200Hz
 STRIDE           = 20        # 50% overlap → predict every 100ms
 WAMP_THRESH      = 10.0
 SMOOTH_N         = 5         # majority-vote over last N predictions
-LOCK_STREAK      = 4         # consecutive identical smoothed predictions to lock a gesture
+LOCK_STREAK      = 10         # consecutive identical smoothed predictions to lock a gesture
 CALIB_SEC        = 2         # seconds of rest for amplitude calibration
 DISPLAY_INTERVAL = 0.2       # seconds between display updates
 
-MQTT_BROKER      = 'localhost'
+MQTT_BROKER      = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT        = 1883
-MQTT_TOPIC       = 'myo/committed_class'
+MQTT_TOPIC       = 'sensor/myo/state'
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -193,7 +197,7 @@ def main():
     mqtt_client = None
     if _MQTT_AVAILABLE:
         try:
-            mqtt_client = mqtt.Client()
+            mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
             mqtt_client.loop_start()
             print(f'MQTT connected → {MQTT_BROKER}:{MQTT_PORT}  topic: {MQTT_TOPIC}')

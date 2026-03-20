@@ -17,9 +17,9 @@ current_mode = "ui"
 predicted_class = "rest"
 target_m2 = 3000
 
-FSR_FORCE_THRESHOLD = 20   # Stop when any FSR hits 20%
-CURL_SPEED_STEP = 50
-MAX_CYLINDRICAL_CURL = 6100
+FSR_FORCE_THRESHOLD = 80
+CURL_SPEED_STEP = 300
+MAX_CYLINDRICAL_CURL = 4970
 
 def on_message(client, userdata, msg):
     global current_mode, predicted_class, target_m2
@@ -38,22 +38,23 @@ def on_message(client, userdata, msg):
             
             if current_mode == "myo":
                 if predicted_class == "rest":
-                    m1, target_m2 = 1020, 2950
+                    m1, target_m2 = 1020, 2800
                     client.publish(TOPIC_MOTOR, json.dumps({"id": 1, "position": m1}))
                     client.publish(TOPIC_MOTOR, json.dumps({"id": 2, "position": target_m2}))
                     
                 elif predicted_class == "palm":
-                    m1, target_m2 = 505, 2950
+                    m1, target_m2 = 505, 2800
                     client.publish(TOPIC_MOTOR, json.dumps({"id": 1, "position": m1}))
                     client.publish(TOPIC_MOTOR, json.dumps({"id": 2, "position": target_m2}))
                     
                 elif predicted_class == "lateral":
-                    m1, target_m2 = 700, 5000
+                    m1, target_m2 = 650, 4300
                     client.publish(TOPIC_MOTOR, json.dumps({"id": 1, "position": m1}))
                     client.publish(TOPIC_MOTOR, json.dumps({"id": 2, "position": target_m2}))
                     
                 elif predicted_class == "cylindrical":
-                    client.publish(TOPIC_MOTOR, json.dumps({"id": 1, "position": 480}))
+                    client.publish(TOPIC_MOTOR, json.dumps({"id": 1, "position": 268}))
+                    client.publish(TOPIC_MOTOR, json.dumps({"id": 2, "position": 4600}))
         return
 
     elif msg.topic == TOPIC_FINGER_TELEMETRY:
@@ -66,6 +67,7 @@ def on_message(client, userdata, msg):
                     max_force = max(fsr_values)
                     
                     if max_force < FSR_FORCE_THRESHOLD:
+                        # print('INCREASING FORCE')
                         target_m2 += CURL_SPEED_STEP
                         target_m2 = min(target_m2, MAX_CYLINDRICAL_CURL)
                         

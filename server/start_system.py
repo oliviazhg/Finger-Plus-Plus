@@ -24,9 +24,9 @@ def main():
         processes.append(p_ui)
 
         # Start Classification Model
-        print("Starting Classification Model...")
-        p_inference = subprocess.Popen([sys.executable, "run_inference.py"])
-        processes.append(p_inference)
+        # print("Starting Classification Model...")
+        # p_inference = subprocess.Popen([sys.executable, "../ML/run_inference_bpnn.py"])
+        # processes.append(p_inference)
 
         # Start Myo Controller
         print("Starting Myo Controller...")

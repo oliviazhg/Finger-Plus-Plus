@@ -1,5 +1,5 @@
 export default function DataSidebar({ data }) {
-  const getPercentage = (val) => Math.min(100, Math.max(0, (val / 3000) * 100));
+  const getPercentage = (val) => Math.min(100, Math.max(0, (val / 3100) * 100));
 
   return (
     <div className="data-sidebar">
@@ -20,10 +20,9 @@ export default function DataSidebar({ data }) {
                 fontWeight: "bold",
               }}
             >
-              TOE CONTROLLERS ( M1 / M2 )
+              TOE CONTROLLERS
             </div>
 
-            {/* Motor 1 Bar */}
             <div style={{ marginBottom: "8px" }}>
               <div
                 style={{
@@ -34,7 +33,7 @@ export default function DataSidebar({ data }) {
                   fontWeight: "bold",
                 }}
               >
-                <span>M1 Force</span>
+                <span>Right Foot Force</span>
                 <span>
                   {Math.round(getPercentage(data.sensors.toe_fsr?.[0] || 0))}%
                 </span>
@@ -68,7 +67,7 @@ export default function DataSidebar({ data }) {
                   fontWeight: "bold",
                 }}
               >
-                <span>M2 Force</span>
+                <span>Left Foot Force</span>
                 <span>
                   {Math.round(getPercentage(data.sensors.toe_fsr?.[1] || 0))}%
                 </span>
@@ -92,6 +91,40 @@ export default function DataSidebar({ data }) {
               </div>
             </div>
           </div>
+
+          <div style={{ marginBottom: "8px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: "10px",
+                  marginBottom: "4px",
+                  fontWeight: "bold",
+                }}
+              >
+                <span>Heel Force</span>
+                <span>
+                  {Math.round(getPercentage(data.sensors.toe_fsr?.[2] || 0))}%
+                </span>
+              </div>
+              <div
+                style={{
+                  height: "8px",
+                  background: "#1e293b",
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${getPercentage(data.sensors.toe_fsr?.[2] || 0)}%`,
+                    background: "#60a5fa",
+                    transition: "width 0.1s ease-out",
+                  }}
+                />
+              </div>
+            </div>
 
           <div>
             <div
