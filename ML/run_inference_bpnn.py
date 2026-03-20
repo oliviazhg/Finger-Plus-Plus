@@ -16,8 +16,12 @@ Startup calibration:
   - Raw EMG is divided by this scale before feature extraction
   - Makes amplitude-based features session-invariant
 
-Display updates every 200ms. Smoothing: majority vote over last SMOOTH_N predictions.
-Dwell-time filter: committed class only changes after candidate holds for DWELL_TIME seconds.
+Locking logic:
+  - Committed class locks to a gesture after LOCK_STREAK consecutive identical
+    smoothed predictions (non-rest).
+  - Once locked, stays locked until any smoothed prediction of rest, which
+    immediately resets committed class to rest.
+  - Every committed class change is published to MQTT (MQTT_TOPIC).
 
 Run: python run_inference_bpnn.py
 '''
@@ -31,6 +35,13 @@ import numpy as np
 import joblib
 from collections import deque
 
+try:
+    import paho.mqtt.client as mqtt
+    _MQTT_AVAILABLE = True
+except ImportError:
+    _MQTT_AVAILABLE = False
+    print('Warning: paho-mqtt not installed — MQTT publishing disabled.')
+
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 import torch
@@ -42,13 +53,18 @@ from pyomyo import Myo, emg_mode
 
 RESULTS_DIR      = 'results_bpnn/2026-03-18_01-00-53_GOOD'
 CLASSES          = ['cylindrical', 'lateral', 'palm', 'rest']
+REST_LABEL       = 'rest'
 WINDOW_SIZE      = 40        # 200ms at 200Hz
 STRIDE           = 20        # 50% overlap → predict every 100ms
 WAMP_THRESH      = 10.0
 SMOOTH_N         = 5         # majority-vote over last N predictions
-DWELL_TIME       = 0.3       # seconds candidate must hold before becoming committed class
+LOCK_STREAK      = 4         # consecutive identical smoothed predictions to lock a gesture
 CALIB_SEC        = 2         # seconds of rest for amplitude calibration
 DISPLAY_INTERVAL = 0.2       # seconds between display updates
+
+MQTT_BROKER      = 'localhost'
+MQTT_PORT        = 1883
+MQTT_TOPIC       = 'myo/committed_class'
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -173,6 +189,22 @@ def main():
     print(f'  Architecture : {meta.get("architecture", "48→128→4")}')
     print(f'  Config       : {meta.get("best_config")}')
 
+    # ── MQTT ──────────────────────────────────────────────────────────────────
+    mqtt_client = None
+    if _MQTT_AVAILABLE:
+        try:
+            mqtt_client = mqtt.Client()
+            mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+            mqtt_client.loop_start()
+            print(f'MQTT connected → {MQTT_BROKER}:{MQTT_PORT}  topic: {MQTT_TOPIC}')
+        except Exception as e:
+            mqtt_client = None
+            print(f'MQTT connection failed ({e}) — publishing disabled.')
+
+    def _publish(cls_name):
+        if mqtt_client is not None:
+            mqtt_client.publish(MQTT_TOPIC, cls_name)
+
     myo_thread = threading.Thread(target=_myo_worker, daemon=True)
     myo_thread.start()
     print('Connecting to Myo (vibration confirms)...')
@@ -182,8 +214,8 @@ def main():
     scale = calibrate()
 
     print('\nRunning — press Ctrl+C to stop.\n')
-    print(f'  {"CLASS":<12}  {"CONF":>5}   {"cyl":>5} {"lat":>5} {"palm":>5} {"rest":>5}   {"infer":>7}')
-    print('  ' + '─' * 58)
+    print(f'  {"CLASS":<12}  {"CONF":>5}   {"cyl":>5} {"lat":>5} {"palm":>5} {"rest":>5}   {"infer":>7}  {"streak":>6}')
+    print('  ' + '─' * 66)
 
     buf                = deque(maxlen=WINDOW_SIZE)
     samples_since_pred = 0
@@ -191,9 +223,9 @@ def main():
     last_display       = 0.0
     last_proba         = np.zeros(len(CLASSES))
 
-    committed_class = CLASSES[0]
-    candidate_class = CLASSES[0]
-    candidate_since = time.monotonic()
+    committed_class = REST_LABEL   # start unlocked
+    streak_class    = REST_LABEL   # class currently being counted
+    streak_count    = 0            # consecutive predictions of streak_class
 
     try:
         while True:
@@ -221,21 +253,37 @@ def main():
             smoothed_label = CLASSES[smoothed]
             last_proba     = proba
 
-            now = time.monotonic()
-            if smoothed_label != candidate_class:
-                candidate_class = smoothed_label
-                candidate_since = now
-            elif now - candidate_since >= DWELL_TIME:
-                committed_class = candidate_class
+            # ── Streak counter ─────────────────────────────────────────────
+            if smoothed_label == streak_class:
+                streak_count += 1
+            else:
+                streak_class  = smoothed_label
+                streak_count  = 1
 
-            if now - last_display >= DISPLAY_INTERVAL:
-                last_display = now
+            # ── Locking logic ──────────────────────────────────────────────
+            prev_committed = committed_class
+
+            if committed_class != REST_LABEL:
+                # Locked to a gesture — release immediately on any rest prediction
+                if smoothed_label == REST_LABEL:
+                    committed_class = REST_LABEL
+            else:
+                # Unlocked — lock after LOCK_STREAK consecutive non-rest predictions
+                if streak_count >= LOCK_STREAK and smoothed_label != REST_LABEL:
+                    committed_class = smoothed_label
+
+            if committed_class != prev_committed:
+                _publish(committed_class)
+                print(f'\n  ▶ Published: {committed_class}', flush=True)
+
+            if time.monotonic() - last_display >= DISPLAY_INTERVAL:
+                last_display = time.monotonic()
                 p = last_proba
-                pending = f'→{candidate_class}' if candidate_class != committed_class else ''
+                streak_disp = f'{streak_class[:3]}×{streak_count}'
                 print(
                     f'\r  {committed_class:<12}  {p[smoothed]:>4.0%}'
                     f'   {p[0]:>5.2f} {p[1]:>5.2f} {p[2]:>5.2f} {p[3]:>5.2f}'
-                    f'   {infer_ms:>5.1f}ms  {pending:<16}',
+                    f'   {infer_ms:>5.1f}ms  {streak_disp:>6}',
                     end='', flush=True
                 )
 
@@ -243,6 +291,9 @@ def main():
         pass
     finally:
         _stop_event.set()
+        if mqtt_client is not None:
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
         print('\nDisconnecting...')
         myo_thread.join(timeout=3)
         print('Done.')
