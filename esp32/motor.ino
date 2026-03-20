@@ -37,8 +37,8 @@ Adafruit_ADS1115 ads_tip;    // Bus 2, 0x49
 
 // Calibration ranges
 const int BASE_MIN = 24489;  const int BASE_MAX = 24770;
-const int MID_MIN  = 24442;  const int MID_MAX  = 24846;
-const int TIP_MIN  = 24509;  const int TIP_MAX  = 24791;
+const int MID_MIN  = 19500;  const int MID_MAX  = 19881;
+const int TIP_MIN  = 20353;  const int TIP_MAX  = 20616;
 
 String current_sys_mode = "ui";
 
@@ -99,7 +99,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   
   if (strcmp(topic, "fsr/finger/m2") == 0) {
     if (current_sys_mode != "fsr") return; 
-    latest_m2_target = constrain((int32_t)doc["value"], 3000, 6000);
+    latest_m2_target = constrain((int32_t)doc["value"], 2000, 5000);
     m2_needs_update = true;
     return;
   }
@@ -122,7 +122,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (target_id == 1) {
       target_pos = constrain(target_pos, 0, 1600);
     } else if (target_id == 2) {
-      target_pos = constrain(target_pos, 3000, 6000);
+      target_pos = constrain(target_pos, 2000, 5000);
     }
 
     dxl.setGoalPosition(target_id, target_pos);
