@@ -56,21 +56,22 @@ void setupMotors() {
   
   for (int i = 0; i < 2; i++) {
     uint8_t id = motor_ids[i];
-    Serial.printf("Pinging Motor %d...\n", id);
+    Serial.printf("Waiting for Motor %d to boot...", id);
     
-    if (dxl.ping(id)) {
-      dxl.torqueOff(id);
-      
-      dxl.setOperatingMode(id, OP_EXTENDED_POSITION); 
-      
-      dxl.writeControlTableItem(ControlTableItem::PROFILE_ACCELERATION, id, 50);
-      dxl.writeControlTableItem(ControlTableItem::PROFILE_VELOCITY, id, 300);
-      
-      dxl.torqueOn(id);
-      Serial.printf("  -> SUCCESS: Motor %d Ready\n", id);
-    } else {
-      Serial.printf("  -> FAIL: Motor %d not found.\n", id);
+    while (!dxl.ping(id)) {
+      Serial.print(".");
+      delay(100);
     }
+    
+    dxl.torqueOff(id);
+      
+    dxl.setOperatingMode(id, OP_EXTENDED_POSITION); 
+      
+    dxl.writeControlTableItem(ControlTableItem::PROFILE_ACCELERATION, id, 50);
+    dxl.writeControlTableItem(ControlTableItem::PROFILE_VELOCITY, id, 300);
+    
+    dxl.torqueOn(id);
+    Serial.printf("  -> SUCCESS: Motor %d Ready\n", id);
   }
 }
 
@@ -98,7 +99,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   
   if (strcmp(topic, "fsr/finger/m2") == 0) {
     if (current_sys_mode != "fsr") return; 
-    latest_m2_target = constrain((int32_t)doc["value"], 2800, 6100);
+    latest_m2_target = constrain((int32_t)doc["value"], 3000, 6000);
     m2_needs_update = true;
     return;
   }
@@ -121,7 +122,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (target_id == 1) {
       target_pos = constrain(target_pos, 0, 1600);
     } else if (target_id == 2) {
-      target_pos = constrain(target_pos, 2800, 6100);
+      target_pos = constrain(target_pos, 3000, 6000);
     }
 
     dxl.setGoalPosition(target_id, target_pos);
